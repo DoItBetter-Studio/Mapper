@@ -318,6 +318,21 @@ namespace Glyphborn.Mapper.Controls
 				_isErasing = true;
 				PaintTileAtMouse(e.X, e.Y, erase: true);
 			}
+			else if (e.Button == MouseButtons.Middle)
+			{
+				_isPainting = false;
+				_isErasing = false;
+				GetTileFromMouse(e.X, e.Y, out int tileX, out int tileY);
+				var sel = State?.SelectedTile!.Value;
+
+				var tile = new TileRef
+				{
+					Tileset = sel?.TilesetIndex ?? 0,
+					TileId = sel?.TileIndex ?? 0
+				};
+
+				MapDocument?.FloodFill(State!.CurrentLayer, tileX, tileY, tile);
+			}
 		}
 
 		private void GetTileFromMouse(int mouseX, int mouseY, out int tileX, out int tileY)
@@ -438,6 +453,9 @@ namespace Glyphborn.Mapper.Controls
 				target = newMap;
 			else
 				target = MapDocument!;
+
+			if (target.IsGhost)
+				return;
 
 			if (erase)
 			{

@@ -94,7 +94,7 @@ namespace Glyphborn.Mapper.Editor
 			if (tile.Primitive != null)
 			{
 				// Mesh Data
-				bw.Write((uint) tile.Primitive.Mesh.Vertices.Length);
+				bw.Write((byte) tile.Primitive.Mesh.Vertices.Length);
 
 				foreach (var v in tile.Primitive.Mesh.Vertices)
 				{
@@ -105,7 +105,7 @@ namespace Glyphborn.Mapper.Editor
 					bw.Write(v.UV.y);
 				}
 
-				bw.Write((uint) tile.Primitive.Mesh.Indices.Length);
+				bw.Write((byte) tile.Primitive.Mesh.Indices.Length);
 
 				foreach (var idx in tile.Primitive.Mesh.Indices)
 				{
@@ -124,8 +124,8 @@ namespace Glyphborn.Mapper.Editor
 			else
 			{
 				// No render data (e.g., Air tile)
-				bw.Write((uint) 0);  // vertex_count = 0
-				bw.Write((uint) 0);  // index_count = 0
+				bw.Write((byte) 0);  // vertex_count = 0
+				bw.Write((byte) 0);  // index_count = 0
 				bw.Write((ushort) 0); // texture width = 0
 				bw.Write((ushort) 0); // texture height = 0
 			}
@@ -154,7 +154,7 @@ namespace Glyphborn.Mapper.Editor
 
 							var map = doc.GetMap(areaX, areaY);
 
-							if (map == null)
+							if (map == null || map.IsGhost)
 							{
 								continue;
 							}

@@ -104,7 +104,7 @@ namespace Glyphborn.Mapper.Editor
 			Changed?.Invoke();
 		}
 
-		private void ExpandSouth()
+		public void ExpandSouth()
 		{
 			var newMaps = new MapDocument?[Width, Height + 1];
 
@@ -130,7 +130,7 @@ namespace Glyphborn.Mapper.Editor
 			Changed?.Invoke();
 		}
 
-		private void ExpandEast()
+		public void ExpandEast()
 		{
 			var newMaps = new MapDocument?[Width + 1, Height];
 

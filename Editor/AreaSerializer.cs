@@ -51,7 +51,7 @@ namespace Glyphborn.Mapper.Editor
 				{
 					var map = doc.GetMap(areaX, areaY);
 
-					if (map == null)
+					if (map == null || map.IsGhost)
 					{
 						bw.Write((byte) 0);
 						continue;

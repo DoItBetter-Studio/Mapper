@@ -180,6 +180,28 @@ namespace Glyphborn.Mapper
 
 			undoToolStripMenuItem.Click += (s, e) => { _activeMap!.Undo(); _mapCanvasControl.Invalidate(); };
 			redoToolStripMenuItem.Click += (s, e) => { _activeMap!.Redo(); _mapCanvasControl.Invalidate(); };
+			fillLayerToolStripMenuItem.Click += (s, e) =>
+			{
+				var sel = _editorState.SelectedTile!.Value;
+
+				var fillTile = new TileRef
+				{
+					Tileset = sel.TilesetIndex,
+					TileId = sel.TileIndex
+				};
+				_activeMap!.FillLayer(_editorState.CurrentLayer, fillTile);
+				_mapCanvasControl.Invalidate();
+			};
+			clearLayerToolStripMenuItem.Click += (s, e) =>
+			{
+				var empty = new TileRef
+				{
+					Tileset = 0,
+					TileId = 0
+				};
+				_activeMap!.Clear(_editorState.CurrentLayer, empty);
+				_mapCanvasControl.Invalidate();
+			};
 		}
 
 		private AreaDocument CreateStartupArea()
@@ -296,6 +318,7 @@ namespace Glyphborn.Mapper
 			saveMapToolStripMenuItem.Enabled = true;
 			saveMapAsToolStripMenuItem.Enabled = true;
 			exportMapToolStripMenuItem.Enabled = true;
+			importMapToolStripMenuItem.Enabled = true;
 		}
 
 		private void LoadMap_Click(object sender, EventArgs e)
@@ -340,6 +363,7 @@ namespace Glyphborn.Mapper
 				saveMapToolStripMenuItem.Enabled = true;
 				saveMapAsToolStripMenuItem.Enabled = true;
 				exportMapToolStripMenuItem.Enabled = true;
+				importMapToolStripMenuItem.Enabled = true;
 			}
 		}
 
@@ -360,6 +384,40 @@ namespace Glyphborn.Mapper
 			{
 				_areaDocument!.Name = sad.MapName!;
 				AreaSerializer.SaveBinary(_areaDocument);
+			}
+		}
+
+		private void ImportMap_Click(object sender, EventArgs e)
+		{
+			var igd = new ImportGhostDialog();
+
+			if (igd.ShowDialog() == DialogResult.OK)
+			{
+				if (igd.SelectedGhostMaps.Count == 0)
+					return;
+
+				// Find bounds of selected ghost maps
+				int maxX = 0, maxY = 0;
+				foreach (var (x, y, _) in igd.SelectedGhostMaps)
+				{
+					if (x > maxX) maxX = x;
+					if (y > maxY) maxY = y;
+				}
+
+				// Expand area if needed to fit all ghost maps
+				while (_areaDocument!.Width <= maxX)
+					_areaDocument.ExpandEast();  // Make ExpandEast() public or use GetOrCreateMap
+				while (_areaDocument.Height <= maxY)
+					_areaDocument.ExpandSouth(); // Make ExpandSouth() public
+
+				// Now place ghost maps
+				foreach (var (x, y, map) in igd.SelectedGhostMaps)
+				{
+					map.IsGhost = true;
+					_areaDocument.SetMap(x, y, map);
+				}
+
+				_areaControl?.Invalidate();
 			}
 		}
 

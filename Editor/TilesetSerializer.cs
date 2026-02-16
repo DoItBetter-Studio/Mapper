@@ -1,6 +1,5 @@
 ﻿using System;
 using System.IO;
-using System.Numerics;
 using System.Text;
 
 using Glyphborn.Mapper.Maths;
@@ -57,7 +56,7 @@ namespace Glyphborn.Mapper.Editor
 			if (tile.Primitive != null)
 			{
 				// Mesh Data
-				bw.Write((uint) tile.Primitive.Mesh.Vertices.Length);
+				bw.Write((byte) tile.Primitive.Mesh.Vertices.Length);
 
 				foreach (var v in tile.Primitive.Mesh.Vertices)
 				{
@@ -68,7 +67,7 @@ namespace Glyphborn.Mapper.Editor
 					bw.Write(v.UV.y);
 				}
 
-				bw.Write((uint) tile.Primitive.Mesh.Indices.Length);
+				bw.Write((byte) tile.Primitive.Mesh.Indices.Length);
 
 				foreach (var idx in tile.Primitive.Mesh.Indices)
 				{
@@ -87,8 +86,8 @@ namespace Glyphborn.Mapper.Editor
 			else
 			{
 				// No render data (e.g., Air tile)
-				bw.Write((uint) 0);  // vertex_count = 0
-				bw.Write((uint) 0);  // index_count = 0
+				bw.Write((byte) 0);  // vertex_count = 0
+				bw.Write((byte) 0);  // index_count = 0
 				bw.Write((ushort) 0); // texture width = 0
 				bw.Write((ushort) 0); // texture height = 0
 			}
@@ -138,7 +137,7 @@ namespace Glyphborn.Mapper.Editor
 			};
 
 			// Read mesh
-			uint vertexCount = br.ReadUInt32();
+			uint vertexCount = br.ReadByte();
 
 			if (vertexCount > 0)
 			{
@@ -153,7 +152,7 @@ namespace Glyphborn.Mapper.Editor
 					};
 				}
 
-				uint indexCount = br.ReadUInt32();
+				uint indexCount = br.ReadByte();
 				var indices = new ushort[indexCount];
 
 				for (int i = 0; i < indexCount; i++)
@@ -180,7 +179,7 @@ namespace Glyphborn.Mapper.Editor
 			else
 			{
 				// Air tile or no render data
-				br.ReadUInt32();  // Skip index_count
+				br.ReadByte();  // Skip index_count
 				br.ReadUInt16();  // Skip texture width
 				br.ReadUInt16();  // Skip texture height
 			}

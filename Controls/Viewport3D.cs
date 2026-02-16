@@ -285,7 +285,7 @@ namespace Glyphborn.Mapper.Controls
 					int offsetY = ay * MapDocument.HEIGHT;
 
 					if (map == null)
-						return;
+						continue;
 
 					// Draw each tile as a wireframe cube
 					for (int layer = 0; layer < MapDocument.LAYERS; layer++)

@@ -1,4 +1,5 @@
-﻿using System.ComponentModel;
+﻿using System;
+using System.ComponentModel;
 using System.Drawing;
 using System.Windows.Forms;
 
@@ -51,12 +52,13 @@ namespace Glyphborn.Mapper
 			clearLayerToolStripMenuItem = new ToolStripMenuItem();
 			viewToolStripMenuItem = new ToolStripMenuItem();
 			showGridToolStripMenuItem = new ToolStripMenuItem();
-			showTilePropertiesToolStripMenuItem = new ToolStripMenuItem();
-			layerOverlayToolStripMenuItem = new ToolStripMenuItem();
+			dViewToolStripMenuItem = new ToolStripMenuItem();
 			helpToolStripMenuItem = new ToolStripMenuItem();
 			shortcutsToolStripMenuItem = new ToolStripMenuItem();
 			aboutToolStripMenuItem = new ToolStripMenuItem();
-			dViewToolStripMenuItem = new ToolStripMenuItem();
+			showTilePropertiesToolStripMenuItem = new ToolStripMenuItem();
+			layerOverlayToolStripMenuItem = new ToolStripMenuItem();
+			importMapToolStripMenuItem = new ToolStripMenuItem();
 			menuStrip.SuspendLayout();
 			SuspendLayout();
 			// 
@@ -72,7 +74,7 @@ namespace Glyphborn.Mapper
 			// 
 			// fileToolStripMenuItem
 			// 
-			fileToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { newMapToolStripMenuItem, openMapToolStripMenuItem, saveMapToolStripMenuItem, saveMapAsToolStripMenuItem, exportMapToolStripMenuItem, toolStripSeparator1, exitToolStripMenuItem });
+			fileToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { newMapToolStripMenuItem, openMapToolStripMenuItem, saveMapToolStripMenuItem, saveMapAsToolStripMenuItem, importMapToolStripMenuItem, exportMapToolStripMenuItem, toolStripSeparator1, exitToolStripMenuItem });
 			fileToolStripMenuItem.Name = "fileToolStripMenuItem";
 			fileToolStripMenuItem.Size = new Size(37, 20);
 			fileToolStripMenuItem.Text = "File";
@@ -111,6 +113,14 @@ namespace Glyphborn.Mapper
 			saveMapAsToolStripMenuItem.Size = new Size(222, 22);
 			saveMapAsToolStripMenuItem.Text = "Save Map As...";
 			saveMapAsToolStripMenuItem.Click += SaveMapAs_Click;
+			// 
+			// importMapToolStripMenuItem
+			//
+			importMapToolStripMenuItem.Enabled = false;
+			importMapToolStripMenuItem.Name = "importMapToolStripMenuItem";
+			importMapToolStripMenuItem.Size = new Size(222, 22);
+			importMapToolStripMenuItem.Text = "Import Map";
+			importMapToolStripMenuItem.Click += ImportMap_Click;
 			// 
 			// exportMapToolStripMenuItem
 			// 
@@ -177,14 +187,14 @@ namespace Glyphborn.Mapper
 			// 
 			showGridToolStripMenuItem.CheckOnClick = true;
 			showGridToolStripMenuItem.Name = "showGridToolStripMenuItem";
-			showGridToolStripMenuItem.Size = new Size(181, 22);
+			showGridToolStripMenuItem.Size = new Size(128, 22);
 			showGridToolStripMenuItem.Text = "Show Grid";
 			showGridToolStripMenuItem.Click += ShowGrid_Click;
 			// 
 			// dViewToolStripMenuItem
 			// 
 			dViewToolStripMenuItem.Name = "dViewToolStripMenuItem";
-			dViewToolStripMenuItem.Size = new Size(181, 22);
+			dViewToolStripMenuItem.Size = new Size(128, 22);
 			dViewToolStripMenuItem.Text = "3D View";
 			dViewToolStripMenuItem.Click += _3DView_Click;
 			// 
@@ -206,6 +216,16 @@ namespace Glyphborn.Mapper
 			aboutToolStripMenuItem.Name = "aboutToolStripMenuItem";
 			aboutToolStripMenuItem.Size = new Size(124, 22);
 			aboutToolStripMenuItem.Text = "About";
+			// 
+			// showTilePropertiesToolStripMenuItem
+			// 
+			showTilePropertiesToolStripMenuItem.Name = "showTilePropertiesToolStripMenuItem";
+			showTilePropertiesToolStripMenuItem.Size = new Size(32, 19);
+			// 
+			// layerOverlayToolStripMenuItem
+			// 
+			layerOverlayToolStripMenuItem.Name = "layerOverlayToolStripMenuItem";
+			layerOverlayToolStripMenuItem.Size = new Size(32, 19);
 			// 
 			// MapperForm
 			// 
@@ -249,5 +269,6 @@ namespace Glyphborn.Mapper
 		private ToolStripMenuItem shortcutsToolStripMenuItem;
 		private ToolStripMenuItem aboutToolStripMenuItem;
 		private ToolStripMenuItem dViewToolStripMenuItem;
+		private ToolStripMenuItem importMapToolStripMenuItem;
 	}
 }

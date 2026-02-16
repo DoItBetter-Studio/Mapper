@@ -21,6 +21,7 @@ namespace Glyphborn.Mapper.Editor
 		public bool IsDirty { get; set; }
 		public bool MiniPreviewDirty { get; set; }
 		public bool IsPreview { get; set; } = false;
+		public bool IsGhost { get; set; } = false;
 
 		private Stack<ICommand> _undoStack = new();
 		private Stack<ICommand> _redoStack = new();
@@ -119,6 +120,8 @@ namespace Glyphborn.Mapper.Editor
 			if (targetTile.Tileset == fillTile.Tileset && targetTile.TileId == fillTile.TileId)
 				return;
 
+			BeginBatch();
+
 			var stack = new Stack<(int x, int y)>();
 			var visited = new HashSet<(int, int)>();
 
@@ -147,6 +150,34 @@ namespace Glyphborn.Mapper.Editor
 				stack.Push((x, y - 1));
 				stack.Push((x, y + 1));
 			}
+
+			EndBatch();
+		}
+
+		public void FillLayer(int layer, TileRef fillTile)
+		{
+			BeginBatch();
+			for (int y = 0; y < HEIGHT; y++)
+			{
+				for (int x = 0; x < WIDTH; x++)
+				{
+					SetTile(layer, x, y, fillTile);
+				}
+			}
+			EndBatch();
+		}
+
+		public void Clear(int layer, TileRef empty)
+		{
+	  		BeginBatch();
+			for (int y = 0; y < HEIGHT; y++)
+			{
+				for (int x = 0; x < WIDTH; x++)
+				{
+					SetTile(layer, x, y, empty);
+				}
+			}
+			EndBatch();
 		}
 	}
 }

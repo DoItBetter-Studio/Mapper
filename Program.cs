@@ -1,5 +1,4 @@
 using System;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace Glyphborn.Mapper
@@ -10,9 +9,9 @@ namespace Glyphborn.Mapper
 		///  The main entry point for the application.
 		/// </summary>
 		[STAThread]
-        static async Task Main()
+        static void Main()
         {
-			await VersionChecker.CheckForUpdatesAsync();
+			VersionChecker.CheckForUpdatesAsync().GetAwaiter().GetResult();
 
 			// To customize application configuration such as set high DPI settings or default font,
 			// see https://aka.ms/applicationconfiguration.
