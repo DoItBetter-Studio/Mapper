@@ -8,8 +8,8 @@ namespace Glyphborn.Mapper
 {
 	public static class VersionChecker
 	{
-		const string LOCAL_VERSION = "0.9.0";
-		const string VERSION_URL = "https://raw.githubusercontent.com/DoItBetter-Studio/Glyphborn-Tools/main/Mapper/version.txt";
+		const string LOCAL_VERSION = "1.0.0";
+		const string VERSION_URL = "https://raw.githubusercontent.com/DoItBetter-Studio/Mapper/main/version.txt";
 		const string UPDATE_ZIP = "update.zip";
 
 		static async Task<string> GetRemoteVersionAsync()
@@ -35,7 +35,7 @@ namespace Glyphborn.Mapper
 
 		static async Task DownloadUpdateAsync(string version)
 		{
-			string url = $"https://github.com/DoItBetter-Studio/Glyphborn-Tools/releases/download/v{version}/Mapper.zip";
+			string url = $"https://github.com/DoItBetter-Studio/Mapper/releases/download/v{version}/Mapper.zip";
 
 			using var client = new HttpClient();
 			var data = await client.GetByteArrayAsync(url);

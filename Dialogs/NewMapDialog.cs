@@ -3,6 +3,7 @@ using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
 
+using Glyphborn.Mapper.Dialogs;
 using Glyphborn.Mapper.Editor;
 using Glyphborn.Mapper.Tiles;
 

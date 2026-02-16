@@ -3,7 +3,7 @@ using System.Windows.Forms;
 
 using Glyphborn.Mapper.Editor;
 
-namespace Glyphborn.Mapper
+namespace Glyphborn.Mapper.Dialogs
 {
 	sealed class CreateTilesetDialog : Form
 	{
