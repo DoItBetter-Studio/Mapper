@@ -8,7 +8,7 @@ namespace Glyphborn.Mapper
 {
 	public static class VersionChecker
 	{
-		const string LOCAL_VERSION = "1.0.0";
+		public const string LOCAL_VERSION = "1.0.1";
 		const string VERSION_URL = "https://raw.githubusercontent.com/DoItBetter-Studio/Mapper/main/version.txt";
 		const string UPDATE_ZIP = "update.zip";
 

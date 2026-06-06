@@ -16,7 +16,7 @@ namespace Glyphborn.Mapper.Dialogs
 			MinimizeBox = false;
 			var label = new Label
 			{
-				Text = "Mapper 1.0.0\r\nWorld Authoring Tool\r\n\r\nDoItBetter Studio\r\nStarted: December 2025\r\nProduction Freeze: February 2026\r\n\r\nProprietary Software\r\nAll Rights Reserved\r\n",
+				Text = $"Mapper {VersionChecker.LOCAL_VERSION}\r\nWorld Authoring Tool\r\n\r\nDoItBetter Studio\r\nStarted: December 2025\r\n\r\nProprietary Software\r\nAll Rights Reserved\r\n",
 				Dock = DockStyle.Fill,
 				TextAlign = System.Drawing.ContentAlignment.MiddleCenter
 			};
