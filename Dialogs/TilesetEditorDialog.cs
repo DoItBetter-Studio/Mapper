@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
-using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
@@ -235,7 +234,7 @@ namespace Glyphborn.Mapper
 				DataSource = Enum.GetValues(typeof(CollisionType))
 			};
 
-			_collisionBox.TextChanged += PropertyChanged;
+			_collisionBox.SelectedIndexChanged += PropertyChanged;
 			panel.Controls.Add(_collisionBox);
 			y += 40;
 
@@ -407,7 +406,7 @@ namespace Glyphborn.Mapper
 			_currentTile = tile;
 
 			_nameTextBox!.Text = tile.Name;
-			_collisionBox!.SelectedItem = (int)tile.Collision;
+			_collisionBox!.SelectedItem = tile.Collision;
 
 			bool hasMesh = tile.Primitive?.Mesh != null;
 			bool hasTexture = tile.Primitive?.Texture != null;
@@ -446,8 +445,11 @@ namespace Glyphborn.Mapper
 				return;
 
 			_currentTile.Name = _nameTextBox!.Text;
-			_currentTile.Collision = (CollisionType)_collisionBox!.SelectedIndex;
-			MarkDirty();
+			if (_collisionBox!.SelectedIndex >= 0)
+			{
+				_currentTile.Collision = (CollisionType)_collisionBox.SelectedItem;
+				MarkDirty();
+			}
 
 			// Update list display
 			_tileListBox!.Invalidate();
@@ -666,12 +668,32 @@ namespace Glyphborn.Mapper
 				{
 					var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
-					// triangulate fan-style
 					for (int i = 2; i < parts.Length - 1; i++)
 					{
+						int baseIndex = indices.Count;
+
 						AddFaceVertex(parts[1], positions, uvs, vertices, indices, vertexMap);
 						AddFaceVertex(parts[i], positions, uvs, vertices, indices, vertexMap);
 						AddFaceVertex(parts[i + 1], positions, uvs, vertices, indices, vertexMap);
+
+						// Enforce CCW winding with upward-facing normals.
+						// Compute the face normal from the three vertices just added.
+						var v0 = vertices[indices[baseIndex]].Position;
+						var v1 = vertices[indices[baseIndex + 1]].Position;
+						var v2 = vertices[indices[baseIndex + 2]].Position;
+
+						var ax = v1.x - v0.x; var ay = v1.y - v0.y; var az = v1.z - v0.z;
+						var bx = v2.x - v0.x; var by = v2.y - v0.y; var bz = v2.z - v0.z;
+
+						float ny = az * bx - ax * bz; // Y component of cross product a × b
+
+						// If normal points downward, swap the last two indices to flip winding
+						if (ny < 0.0f)
+						{
+							var tmp = indices[baseIndex + 1];
+							indices[baseIndex + 1] = indices[baseIndex + 2];
+							indices[baseIndex + 2] = tmp;
+						}
 					}
 				}
 			}

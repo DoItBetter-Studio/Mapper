@@ -56,6 +56,9 @@ namespace Glyphborn.Mapper.Editor
 
 		public void SetTile(int layer, int x, int y, TileRef tile)
 		{
+			if (this.IsGhost)
+				return;
+
 			ref var current = ref Tiles[layer][y][x];
 
 			if (current.Tileset == tile.Tileset &&

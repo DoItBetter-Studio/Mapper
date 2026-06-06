@@ -4,5 +4,6 @@
 	{
 		public byte Tileset;
 		public ushort TileId;
+		public uint RoomID;
 	}
 }

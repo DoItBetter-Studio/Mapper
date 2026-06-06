@@ -4,6 +4,7 @@ using System.Windows.Forms;
 
 using Glyphborn.Mapper.Colors;
 using Glyphborn.Mapper.Controls;
+using Glyphborn.Mapper.Dialogs;
 using Glyphborn.Mapper.Editor;
 using Glyphborn.Mapper.Tiles;
 
@@ -201,6 +202,16 @@ namespace Glyphborn.Mapper
 				};
 				_activeMap!.Clear(_editorState.CurrentLayer, empty);
 				_mapCanvasControl.Invalidate();
+			};
+			shortcutsToolStripMenuItem.Click += (s, e) =>
+			{
+				var dlg = new ShortcutsDialog(menuStrip);
+				dlg.ShowDialog(this);
+			};
+			aboutToolStripMenuItem.Click += (s, e) =>
+			{
+				var ad = new AboutDialog();
+				ad.ShowDialog(this);
 			};
 		}
 
