@@ -1,7 +1,8 @@
-﻿using System;
+﻿using Glyphborn.Mapper.Tiles;
+using System;
 using System.Collections.Generic;
-
-using Glyphborn.Mapper.Tiles;
+using System.Drawing;
+using System.Linq;
 
 namespace Glyphborn.Mapper.Editor
 {
@@ -17,6 +18,7 @@ namespace Glyphborn.Mapper.Editor
 	{
 		// --- Shared tilesets (same structure MapDocument already uses) ---
 		public List<Tileset> Tilesets { get; } = new List<Tileset>();
+		public List<RoomDefinition> Rooms{ get; } = new List<RoomDefinition>();
 
 		// --- Map Matrix ---
 		public int Width { get; private set; }
@@ -142,5 +144,26 @@ namespace Glyphborn.Mapper.Editor
 			Width++;
 			Changed?.Invoke();
 		}
+
+		public RoomDefinition CreateRoom()
+		{
+			uint nextId = 1;
+			var used = new HashSet<uint>(Rooms.Select(r => r.Id));
+			while (used.Contains(nextId)) nextId++;
+
+			int hash = (int)(nextId * 2654435761u);
+			var color = Color.FromArgb(
+				100 + (Math.Abs(hash >> 16) % 155),
+				100 + (Math.Abs(hash >> 8) % 155),
+				100 + (Math.Abs(hash) % 155));
+
+			var room = new RoomDefinition { Id = nextId, Name = $"Room {nextId}", Color = color };
+			Rooms.Add(room);
+			Changed?.Invoke();
+			return room;
+		}
+
+		public void DeleteRoom(uint id) { Rooms.RemoveAll(r => r.Id == id); Changed?.Invoke(); }
+		public RoomDefinition? GetRoom(uint id) => Rooms.FirstOrDefault(r => r.Id == id);
 	}
 }

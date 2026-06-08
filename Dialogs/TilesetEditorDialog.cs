@@ -15,7 +15,13 @@ namespace Glyphborn.Mapper
 	public partial class TilesetEditorDialog : Form
 	{
 		private Tileset? _tileset;
-		private ListBox? _tileListBox;
+		private Panel? _gridScrollPanel;
+		private Panel? _gridCanvas;
+		private int _selectedSlotIndex = 0;
+
+		private const int CellSize = 32;
+		private const int Columns = 8;
+		private const int TotalSlots = 8;
 
 		// Right panel controls
 		private TextBox? _nameTextBox;
@@ -85,7 +91,7 @@ namespace Glyphborn.Mapper
 				Padding = new Padding(10)
 			};
 
-			mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 250));
+			mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 288));
 			mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
 			// Left Panel: Tile List
@@ -146,33 +152,31 @@ namespace Glyphborn.Mapper
 				BackColor = Color.FromArgb(30, 30, 30)
 			};
 
-			var addButton = new Button
-			{
-				Text = "+ Add Tile",
-				Dock = DockStyle.Top,
-				Height = 35,
-				BackColor = Color.FromArgb(40, 120, 180),
-				ForeColor = Color.White,
-				FlatStyle = FlatStyle.Flat
-			};
-
-			addButton.Click += AddTile_Click;
-
-			_tileListBox = new ListBox
+			_gridScrollPanel = new Panel
 			{
 				Dock = DockStyle.Fill,
-				BackColor = Color.FromArgb(45, 45, 48),
-				ForeColor = Color.White,
-				BorderStyle = BorderStyle.None,
-				DrawMode = DrawMode.OwnerDrawFixed,
-				ItemHeight = 70
+				AutoScroll = true,
+				BackColor = Color.FromArgb(35, 35, 38)
 			};
 
-			_tileListBox.SelectedIndexChanged += TileList_SelectedIndexChanged;
-			_tileListBox.DrawItem += TileList_DrawItem;
+			_gridCanvas = new Panel
+			{
+				Location = new Point(0, 0),
+				Width = Columns * CellSize,
+				Height = (TotalSlots / Columns) * CellSize,
+				BackColor = Color.FromArgb(35, 35, 38)
+			};
 
-			panel.Controls.Add(_tileListBox);
-			panel.Controls.Add(addButton);
+			// Enable DoubleBuffering to stop flickering when scrolling or selecting tiles
+			typeof(Panel).InvokeMember("DoubleBuffered",
+				System.Reflection.BindingFlags.SetProperty | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
+				null, _gridCanvas, new object[] { true });
+
+			_gridCanvas.Paint += GridCanvas_Paint;
+			_gridCanvas.MouseClick += GridCanvas_MouseClick;
+
+			_gridScrollPanel.Controls.Add(_gridCanvas);
+			panel.Controls.Add(_gridScrollPanel);
 
 			return panel;
 		}
@@ -332,72 +336,25 @@ namespace Glyphborn.Mapper
 
 		private void RefreshTileList()
 		{
-			_tileListBox!.Items.Clear();
+			UpdateGridSize();
+			_gridCanvas?.Invalidate();
 
-			foreach (var tile in _tileset!.Tiles)
+			if (_tileset!.Tiles.Count > 0)
 			{
-				_tileListBox.Items.Add(tile);
-			}
-
-			if (_tileListBox.Items.Count > 0)
-			{
-				_tileListBox.SelectedIndex = 0;
-			}
-		}
-
-		private void TileList_DrawItem(object? sender, DrawItemEventArgs e)
-		{
-			if (e.Index < 0)
-				return;
-
-			var tile = (TileDefinition)_tileListBox!.Items[e.Index];
-
-			e.DrawBackground();
-
-			// Draw Thumbnail (use TilePreviewer - editor-only service)
-			var thumbRect = new Rectangle(e.Bounds.X + 5, e.Bounds.Y + 5, 60, 60); 
-			if (tile.Primitive != null)
-			{
-				try
+				TileDefinition? target = null;
+				foreach (var t in _tileset.Tiles)
 				{
-					var thumb = TilePreviewer.GetThumbnail(tile.Primitive.Texture, 60, 60);
-					e.Graphics.DrawImage(thumb, thumbRect);
+					if (t.Id == _selectedSlotIndex) target = t;
 				}
-				catch
+
+				if (target == null && _tileset.Tiles.Count > 0)
 				{
-					e.Graphics.FillRectangle(Brushes.DimGray, thumbRect);
+					target = _tileset.Tiles[0];
+					_selectedSlotIndex = target.Id;
 				}
+
+				if (target != null) LoadTileProperties(target);
 			}
-			else
-			{
-				e.Graphics.FillRectangle(Brushes.DimGray, thumbRect);
-			}
-
-			// Draw Text
-			var textBrush = (e.State & DrawItemState.Selected) != 0 ? Brushes.White : Brushes.LightGray;
-			var textRect = new Rectangle(e.Bounds.X + 70, e.Bounds.Y + 10, e.Bounds.Width - 75, e.Bounds.Height);
-
-			e.Graphics.DrawString(
-				$"[{tile.Id}] {tile.Name}",
-				_tileListBox.Font,
-				textBrush,
-				textRect
-			);
-
-			e.Graphics.DrawString(
-				tile.Collision.ToString(),
-				new Font(_tileListBox.Font.FontFamily, 8),
-				Brushes.Gray,
-				new PointF(textRect.X, textRect.Y + 20)
-			);
-
-			e.DrawFocusRectangle();
-		}
-
-		private void TileList_SelectedIndexChanged(object? sender, EventArgs e)
-		{
-			if (_tileListBox!.SelectedItem is TileDefinition tile)
-				LoadTileProperties(tile);
 		}
 
 		private void LoadTileProperties(TileDefinition tile)
@@ -420,7 +377,7 @@ namespace Glyphborn.Mapper
 					? $"({Path.GetFileName(_currentTile.MeshSourcePath)})"
 					: "(none)");
 
-			_textureLabel!.Text = "Mesh: " +
+			_textureLabel!.Text = "Texture: " +
 				(_currentTile.TextureSourcePath != null
 					? $"({Path.GetFileName(_currentTile.TextureSourcePath)})"
 					: "(none)");
@@ -452,24 +409,9 @@ namespace Glyphborn.Mapper
 			}
 
 			// Update list display
-			_tileListBox!.Invalidate();
+			_gridCanvas!.Invalidate();
 		}
 
-		private void AddTile_Click(object? sender, EventArgs e)
-		{
-			var newTile = new TileDefinition
-			{
-				Id = (ushort)_tileset!.Tiles.Count,
-				Name = $"Tile {_tileset.Tiles.Count}",
-				Collision = CollisionType.None,
-				Primitive = null
-			};
-
-			_tileset.Tiles.Add(newTile);
-			_tileListBox!.Items.Add(newTile);
-			_tileListBox.SelectedItem = newTile;
-			MarkDirty();
-		}
 
 		private void ImportMesh_Click(object? sender, EventArgs e)
 		{
@@ -494,7 +436,7 @@ namespace Glyphborn.Mapper
 
 					// refresh preview / list
 					_previewBox!.Image = _currentTile.Primitive != null ? TilePreviewer.GetPreview(_currentTile.Primitive.Texture) : null;
-					_tileListBox!.Invalidate();
+					_gridCanvas!.Invalidate();
 
 
 					_currentTile.MeshSourcePath = ofd.FileName;
@@ -536,7 +478,7 @@ namespace Glyphborn.Mapper
 						// Update preview (editor-only previewer)
 						_previewBox!.Image = TilePreviewer.GetPreview(texture);
 
-						_tileListBox!.Invalidate();
+						_gridCanvas!.Invalidate();
 					}
 
 					LoadTileProperties(_currentTile);
@@ -555,26 +497,18 @@ namespace Glyphborn.Mapper
 			if (_currentTile == null || _currentTile.Id == 0) return;
 
 			var result = MessageBox.Show(
-				$"Delete tile '{_currentTile.Name}'?",
-				"Confirm Delete",
-				MessageBoxButtons.YesNo,
-				MessageBoxIcon.Warning
+				$"Delete tile '{_currentTile.Name}'? This will leave its grid position empty.",
+				"Confirm Delete", MessageBoxButtons.YesNo, MessageBoxIcon.Warning
 			);
 
 			if (result == DialogResult.Yes)
 			{
 				_tileset!.Tiles.Remove(_currentTile);
-
-				// Re-index remaining tiles
-				for (int i = 0; i < _tileset.Tiles.Count; i++)
-				{
-					_tileset.Tiles[i].Id = (ushort) i;
-				}
-
+				_currentTile = null;
+				UpdateGridSize();
 				RefreshTileList();
+				MarkDirty();
 			}
-
-			MarkDirty();
 		}
 
 		// Helper: conver System.Drawing.Bitmap -> engine texture
@@ -631,6 +565,146 @@ namespace Glyphborn.Mapper
 		private void MarkDirty()
 		{
 			_isDirty = true;
+		}
+
+		private void GridCanvas_Paint(object? sender, PaintEventArgs e)
+		{
+			if (_tileset == null) return;
+
+			// Use a smoother rendering hint for text overlays
+			e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+
+			using (var selectedPen = new Pen(Color.FromArgb(40, 120, 180), 2))
+			using (var emptyPen = new Pen(Color.FromArgb(55, 55, 58), 1) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash })
+			using (var borderPen = new Pen(Color.FromArgb(45, 45, 48), 1))
+			using (var font = new Font("Segoe UI", 7f))
+			using (var idBrush = new SolidBrush(Color.FromArgb(110, 110, 115)))
+			{
+				int totalRenderSlots = (_gridCanvas!.Height / CellSize) * Columns;
+
+				for (int i = 0; i < totalRenderSlots; i++)
+				{
+					int row = i / Columns;
+					int col = i % Columns;
+
+					// Full bounding box of the slot
+					var slotRect = new Rectangle(col * CellSize, row * CellSize, CellSize, CellSize);
+					// Inner content bounding box (leaves a 2px gap around tiles)
+					var contentRect = new Rectangle(slotRect.X + 2, slotRect.Y + 2, CellSize - 4, CellSize - 4);
+
+					TileDefinition? tile = null;
+					foreach (var t in _tileset.Tiles)
+					{
+						if (t.Id == i) { tile = t; break; }
+					}
+
+					// Draw Slot Background/Borders
+					if (tile != null)
+					{
+						// Draw thumbnail preview
+						if (tile.Primitive?.Texture != null)
+						{
+							try
+							{
+								var thumb = TilePreviewer.GetThumbnail(tile.Primitive.Texture, contentRect.Width, contentRect.Height);
+								e.Graphics.DrawImage(thumb, contentRect);
+							}
+							catch
+							{
+								e.Graphics.FillRectangle(Brushes.DimGray, contentRect);
+							}
+						}
+						else
+						{
+							e.Graphics.FillRectangle(Brushes.DimGray, contentRect);
+						}
+
+						// Subtle frame around active tiles
+						e.Graphics.DrawRectangle(borderPen, contentRect);
+					}
+					else
+					{
+						// Dotted line frame for empty slots
+						e.Graphics.DrawRectangle(emptyPen, contentRect);
+						// Draw a faint central plus sign
+						e.Graphics.DrawString("+", font, idBrush, slotRect.X + (CellSize / 2) - 4, slotRect.Y + (CellSize / 2) - 6);
+					}
+
+					// Draw Selection Highlight Border (Overlays on top of the tile bounds)
+					if (i == _selectedSlotIndex)
+					{
+						e.Graphics.DrawRectangle(selectedPen, slotRect.X + 1, slotRect.Y + 1, CellSize - 2, CellSize - 2);
+					}
+
+					// Tiny index ID printed neatly in the top-left corner of the slot
+					e.Graphics.DrawString(i.ToString(), font, idBrush, slotRect.X + 4, slotRect.Y + 3);
+				}
+			}
+		}
+
+		private void GridCanvas_MouseClick(object? sender, MouseEventArgs e)
+		{
+			int col = e.X / CellSize;
+			int row = e.Y / CellSize;
+
+			if (col >= Columns || col < 0 || row < 0) return;
+
+			int slotIndex = row * Columns + col;
+			_selectedSlotIndex = slotIndex;
+
+			TileDefinition? tile = null;
+			foreach (var t in _tileset!.Tiles)
+			{
+				if (t.Id == slotIndex) { tile = t; break; }
+			}
+
+			if (tile != null)
+			{
+				LoadTileProperties(tile);
+			}
+			else
+			{
+				// Clicked an empty slot! Automatically generate a blank tile assigned to this index location
+				var newTile = new TileDefinition
+				{
+					Id = (ushort)slotIndex,
+					Name = $"Tile {slotIndex}",
+					Collision = CollisionType.None,
+					Primitive = null
+				};
+
+				_tileset.Tiles.Add(newTile);
+				UpdateGridSize();
+				LoadTileProperties(newTile);
+				MarkDirty();
+			}
+
+			_gridCanvas!.Invalidate();
+		}
+
+		private void UpdateGridSize()
+		{
+			if (_tileset == null || _gridCanvas == null) return;
+
+			int maxTileId = 0;
+			foreach (var tile in _tileset.Tiles)
+			{
+				if (tile.Id > maxTileId)
+					maxTileId = tile.Id;
+			}
+
+			int currentUsedRows = (_tileset.Tiles.Count == 0) ? 0 : (maxTileId / Columns) + 1;
+
+			// FIX: Find the baseline rows first, THEN add the 4 trailing blank rows.
+			int minRows = TotalSlots / Columns;
+			int totalRows = Math.Max(minRows, currentUsedRows) + 4;
+
+			int neededHeight = totalRows * CellSize;
+
+			if (_gridCanvas.Height != neededHeight)
+			{
+				_gridCanvas.Height = neededHeight;
+			}
 		}
 	}
 

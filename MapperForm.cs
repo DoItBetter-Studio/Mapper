@@ -50,15 +50,91 @@ namespace Glyphborn.Mapper
 			var root = new TableLayoutPanel
 			{
 				Dock = DockStyle.Fill,
-				ColumnCount = 4,
+				ColumnCount = 3,
 				RowCount = 1,
 				BackColor = Color.FromArgb(45, 45, 48)
 			};
 
-			root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 276));
-			root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 134));
+			root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 288));
+			//root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 134));
 			root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 			root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 400));
+
+			var mapRoot = new TableLayoutPanel
+			{
+				Dock = DockStyle.Fill,
+				BackColor = Color.FromArgb(30, 30, 30),
+				ColumnCount = 1,
+				RowCount = 2
+			};
+
+			mapRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+			mapRoot.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+			var toolsPanel = new FlowLayoutPanel
+			{
+				Dock = DockStyle.Fill,
+				Height = 32,
+				BackColor = Color.FromArgb(45, 45, 45),
+				FlowDirection = FlowDirection.LeftToRight,
+				WrapContents = false
+			};
+
+			var mapBuilderBtn = new Button
+			{
+				Text = "Map Builder",
+				Width = 90,
+				Height = 28,
+				Margin = new Padding(4),
+				BackColor = Color.FromArgb(45, 45, 45),
+				ForeColor = Color.White,
+				FlatStyle = FlatStyle.Flat,
+			};
+
+			var roomBuilderBtn = new Button
+			{
+				Text = "Room Builder",
+				Width = 90,
+				Height = 28,
+				Margin = new Padding(4),
+				BackColor = Color.FromArgb(45, 45, 45),
+				ForeColor = Color.White,
+				FlatStyle = FlatStyle.Flat,
+			};
+
+			mapBuilderBtn.BackColor = Color.DodgerBlue;
+
+			mapBuilderBtn.Click += (_, __) =>
+			{
+				mapBuilderBtn.BackColor = Color.DodgerBlue;
+				roomBuilderBtn.BackColor = Color.FromArgb(45, 45, 45);
+				_editorState.Tool = Tool.MapBuilder;
+				RefreshSidebar();
+				_mapCanvasControl?.Invalidate();
+			};
+
+			roomBuilderBtn.Click += (_, __) =>
+			{
+				roomBuilderBtn.BackColor = Color.DodgerBlue;
+				mapBuilderBtn.BackColor = Color.FromArgb(45, 45, 45);
+				_editorState.Tool = Tool.RoomBuilder;
+				RefreshSidebar();
+				_mapCanvasControl?.Invalidate();
+			};
+
+			toolsPanel.Controls.Add(mapBuilderBtn);
+			toolsPanel.Controls.Add(roomBuilderBtn);
+
+			var mapCanvasHost = new TableLayoutPanel
+			{
+				Dock = DockStyle.Fill,
+				ColumnCount = 2,
+				RowCount = 1,
+				BackColor = Color.FromArgb(30, 30, 30),
+			};
+
+			mapCanvasHost.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 134));
+			mapCanvasHost.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
 			_mapCanvasControl = new MapCanvasControl
 			{
@@ -66,15 +142,19 @@ namespace Glyphborn.Mapper
 				State = _editorState
 			};
 
-			root.Controls.Add(_mapCanvasControl, 2, 0);
-
 			var layersPanel = new Panel
 			{
 				Dock = DockStyle.Fill,
 				AutoScroll = true,
 			};
 
-			root.Controls.Add(layersPanel, 1, 0);	
+			mapCanvasHost.Controls.Add(_mapCanvasControl, 1, 0);
+			mapCanvasHost.Controls.Add(layersPanel, 0, 0);
+
+			mapRoot.Controls.Add(toolsPanel, 0, 0);
+			mapRoot.Controls.Add(mapCanvasHost, 0, 1);
+
+			root.Controls.Add(mapRoot, 1, 0);
 
 			var layersFlow = new FlowLayoutPanel
 			{
@@ -236,6 +316,39 @@ namespace Glyphborn.Mapper
 			return area;
 		}
 
+		private void RefreshSidebar()
+		{
+			if (_tilesetColumn == null || _areaDocument == null) return;
+
+			_tilesetColumn.SuspendLayout();
+			_tilesetColumn.Controls.Clear();
+			_tilesetColumn.RowStyles.Clear();
+
+			if (_editorState.Tool == Tool.RoomBuilder)
+			{
+				_tilesetColumn.RowCount = 1;
+				_tilesetColumn.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
+				var roomPane = new RoomPane(_editorState, () => _mapCanvasControl?.Invalidate());
+				_tilesetColumn.Controls.Add(roomPane, 0, 0);
+			}
+			else
+			{
+				var tilesets = _areaDocument.Tilesets;
+				_tilesetColumn.RowCount = tilesets.Count;
+
+				for (int i = 0; i < tilesets.Count; i++)
+				{
+					_tilesetColumn.RowStyles.Add(new RowStyle(SizeType.Percent, 100f / tilesets.Count));
+					var ts = tilesets[i];
+					var pane = new TilesetPane(ts.Name, (byte)i, ts, _editorState);
+					_tilesetColumn.Controls.Add(pane, 0, i);
+				}
+			}
+
+			_tilesetColumn.ResumeLayout();
+		}
+
 		private void UpdateLayerButtons(FlowLayoutPanel layersFlow, int layerIndex)
 		{
 			for (int i = 0; i < layersFlow.Controls.Count; i++)
@@ -274,29 +387,8 @@ namespace Glyphborn.Mapper
 
 		void BindMap(MapDocument map)
 		{
-			_tilesetColumn!.SuspendLayout();
-			_tilesetColumn.Controls.Clear();
-			_tilesetColumn.RowStyles.Clear();
-
-			var tilesets = _areaDocument!.Tilesets;
-
-			_tilesetColumn.RowCount = tilesets.Count;
-
-			for (int i = 0; i < tilesets.Count; i++)
-			{
-				_tilesetColumn.RowStyles.Add(new RowStyle(SizeType.Percent, 100f / tilesets.Count));
-			}
-
-			for (byte i = 0; i < tilesets.Count; i++)
-			{
-				var ts = tilesets[i];
-				var pane = new TilesetPane(ts.Name, i, ts, _editorState);
-				_tilesetColumn.Controls.Add(pane, 0, i);
-			}
-
-			_tilesetColumn.ResumeLayout();
+			RefreshSidebar();
 			_areaControl!.SetArea(_areaDocument);
-
 			map.Update += () => _areaControl.Invalidate();
 		}
 

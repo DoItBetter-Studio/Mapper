@@ -8,72 +8,64 @@ namespace Glyphborn.Mapper.Editor
 {
 	public static class AreaExporter
 	{
-		private const uint MAGIC_GEOMETRY	= 0x474D4247; // "GBMG"
-		private const uint MAGIC_COLLISION	= 0x434D4247; // "GBMC"
-		private const uint MAGIC_TILESETS	= 0x53544C47;  // "GBTS"
-
+		private const uint MAGIC_GEOMETRY = 0x474D4247;  // "GBMG"
+		private const uint MAGIC_COLLISION = 0x434D4247;  // "GBMC"
+		private const uint MAGIC_TILESETS = 0x53544C47;  // "GBTS"
+		private const uint MAGIC_ROOM = 0x524D4247;  // "GBRM"
 
 		private const ushort VERSION = 1;
+
 		private static string DataRoot => Path.Combine(AppContext.BaseDirectory, "../..", "data");
 		private static string Layouts => Path.Combine(DataRoot, "layouts");
 		private static string Tilesets => Path.Combine(DataRoot, "tilesets");
 
-
 		public static bool ExportBinary(AreaDocument doc)
 		{
-			// Validate format limits so we don't silently truncate values.
 			if (doc.Width > byte.MaxValue || doc.Height > byte.MaxValue)
 				throw new InvalidDataException("Area dimensions exceed storage limits (max 255).");
 
-			if (!WriteTilesets(doc))
-				return false;
-			if (!WriteGeometry(doc))
-				return false;
-			if (!WriteCollision(doc))
-				return false;
+			if (!WriteTilesets(doc)) return false;
+			if (!WriteGeometry(doc)) return false;
+			if (!WriteCollision(doc)) return false;
+			if (!WriteRooms(doc)) return false;
 
 			return true;
 		}
 
+		// ── Tilesets ──────────────────────────────────────────────────────────────
+
 		private static bool WriteTilesets(AreaDocument doc)
 		{
-			bool result = false;
-
 			try
 			{
-				for (int i = 0; i < doc.Tilesets.Count; i++)
+				foreach (var tileset in doc.Tilesets)
 				{
-					var tileset = doc.Tilesets[i];
 					string tilesetPath = Resolve(tileset);
-					var dir = Path.GetDirectoryName(tilesetPath) ?? Tilesets;
+					string dir = Path.GetDirectoryName(tilesetPath) ?? Tilesets;
 					if (!Directory.Exists(dir))
 						Directory.CreateDirectory(dir);
 
-					var name = tilesetPath.ToLower().Replace(' ', '_').Replace('-', '_');
+					// Normalise to lowercase/underscores to match runtime expectations
+					string name = tilesetPath.ToLower().Replace(' ', '_').Replace('-', '_');
 
-					using (var fs = new FileStream(name, FileMode.Create))
-					using (var bw = new BinaryWriter(fs))
-					{
-						bw.Write(MAGIC_TILESETS);
-						bw.Write(VERSION);
-						bw.Write((ushort) tileset.Tiles.Count);
+					using var fs = new FileStream(name, FileMode.Create);
+					using var bw = new BinaryWriter(fs);
 
-						foreach (var tile in tileset.Tiles)
-						{
-							WriteTile(bw, tile);
-						}
-					}
+					bw.Write(MAGIC_TILESETS);
+					bw.Write(VERSION);
+					bw.Write((ushort)tileset.Tiles.Count);
+
+					foreach (var tile in tileset.Tiles)
+						WriteTile(bw, tile);
 				}
 
-				result = true;
+				return true;
 			}
 			catch (Exception ex)
 			{
 				MessageBox.Show(ex.Message);
-				result = false;
+				return false;
 			}
-
-			return result;
 		}
 
 		private static string Resolve(Tileset tileset)
@@ -93,9 +85,7 @@ namespace Glyphborn.Mapper.Editor
 		{
 			if (tile.Primitive != null)
 			{
-				// Mesh Data
-				bw.Write((byte) tile.Primitive.Mesh.Vertices.Length);
-
+				bw.Write((byte)tile.Primitive.Mesh.Vertices.Length);
 				foreach (var v in tile.Primitive.Mesh.Vertices)
 				{
 					bw.Write(v.Position.x);
@@ -105,135 +95,153 @@ namespace Glyphborn.Mapper.Editor
 					bw.Write(v.UV.y);
 				}
 
-				bw.Write((byte) tile.Primitive.Mesh.Indices.Length);
-
+				bw.Write((byte)tile.Primitive.Mesh.Indices.Length);
 				foreach (var idx in tile.Primitive.Mesh.Indices)
-				{
 					bw.Write(idx);
-				}
 
-				// Texture data
-				bw.Write((ushort) tile.Primitive.Texture.Width);
-				bw.Write((ushort) tile.Primitive.Texture.Height);
-
+				bw.Write((ushort)tile.Primitive.Texture.Width);
+				bw.Write((ushort)tile.Primitive.Texture.Height);
 				foreach (var pixel in tile.Primitive.Texture.Pixels)
-				{
-					bw.Write(pixel);  // ARGB uint32
-				}
+					bw.Write(pixel);
 			}
 			else
 			{
-				// No render data (e.g., Air tile)
-				bw.Write((byte) 0);  // vertex_count = 0
-				bw.Write((byte) 0);  // index_count = 0
-				bw.Write((ushort) 0); // texture width = 0
-				bw.Write((ushort) 0); // texture height = 0
+				bw.Write((byte)0);   // vertex_count
+				bw.Write((byte)0);   // index_count
+				bw.Write((ushort)0);   // texture_width
+				bw.Write((ushort)0);   // texture_height
 			}
 		}
+
+		// ── Geometry ──────────────────────────────────────────────────────────────
 
 		private static bool WriteGeometry(AreaDocument doc)
 		{
-			bool result = false;
 			try
 			{
 				for (int areaY = 0; areaY < doc.Height; areaY++)
 					for (int areaX = 0; areaX < doc.Width; areaX++)
 					{
-						var name = doc.Name.ToLower().Replace(' ', '_').Replace('-', '_');
+						string chunkDir = ChunkDir(doc, areaX, areaY);
+						string filePath = Path.Combine(chunkDir, "geometry.bin");
 
-						string geometryPath = Path.Combine(Layouts, $"{name}_{areaX}_{areaY}", $"geometry.bin");
-						var dir = Path.GetDirectoryName(geometryPath) ?? Layouts;
-						if (!Directory.Exists(dir))
-							Directory.CreateDirectory(dir);
+						using var fs = new FileStream(filePath, FileMode.Create);
+						using var bw = new BinaryWriter(fs);
 
-						using (var fs = new FileStream(geometryPath, FileMode.Create))
-						using (var bw = new BinaryWriter(fs))
-						{
-							bw.Write(MAGIC_GEOMETRY);
-							bw.Write(VERSION);
+						bw.Write(MAGIC_GEOMETRY);
+						bw.Write(VERSION);
 
-							var map = doc.GetMap(areaX, areaY);
+						var map = doc.GetMap(areaX, areaY);
+						if (map == null || map.IsGhost) continue;
 
-							if (map == null || map.IsGhost)
-							{
-								continue;
-							}
-
-							for (int layers = 0; layers < MapDocument.LAYERS; layers++)
-								for (int y = 0; y < MapDocument.HEIGHT; y++)
-									for (int x = 0; x < MapDocument.WIDTH; x++)
-									{
-										var tile = map.Tiles[layers][y][x];
-
-										// Pack tileset (2 bits) + tileId (14 bits) into ushort
-										ushort packed = (ushort) ((tile.Tileset << 14) | tile.TileId);
-										bw.Write(packed);
-									}
-						}
+						for (int l = 0; l < MapDocument.LAYERS; l++)
+							for (int y = 0; y < MapDocument.HEIGHT; y++)
+								for (int x = 0; x < MapDocument.WIDTH; x++)
+								{
+									var tile = map.Tiles[l][y][x];
+									ushort packed = (ushort)((tile.Tileset << 14) | tile.TileId);
+									bw.Write(packed);
+								}
 					}
 
-				result = true;
+				return true;
 			}
 			catch (Exception ex)
 			{
 				MessageBox.Show(ex.Message);
-				result = false;
+				return false;
 			}
-
-			return result;
 		}
+
+		// ── Collision ─────────────────────────────────────────────────────────────
 
 		private static bool WriteCollision(AreaDocument doc)
 		{
-			bool result = false;
-
 			try
 			{
 				for (int areaY = 0; areaY < doc.Height; areaY++)
 					for (int areaX = 0; areaX < doc.Width; areaX++)
 					{
-						var name = doc.Name.ToLower().Replace(' ', '_').Replace('-', '_');
+						string chunkDir = ChunkDir(doc, areaX, areaY);
+						string filePath = Path.Combine(chunkDir, "collision.bin");
 
-						string collisionPath = Path.Combine(Layouts, $"{name}_{areaX}_{areaY}", "collision.bin");
-						var dir = Path.GetDirectoryName(collisionPath) ?? Layouts;
-						if (!Directory.Exists(dir))
-							Directory.CreateDirectory(dir);
+						using var fs = new FileStream(filePath, FileMode.Create);
+						using var bw = new BinaryWriter(fs);
 
-						using (var fs = new FileStream(collisionPath, FileMode.Create))
-						using (var bw = new BinaryWriter(fs))
-						{
-							bw.Write(MAGIC_COLLISION);
-							bw.Write(VERSION);
+						bw.Write(MAGIC_COLLISION);
+						bw.Write(VERSION);
 
-							var map = doc.GetMap(areaX, areaY);
+						var map = doc.GetMap(areaX, areaY);
+						if (map == null) continue;
 
-							if (map == null)
-							{
-								continue;
-							}
-
-							for (int layers = 0; layers < MapDocument.LAYERS; layers++)
-								for (int y = 0; y < MapDocument.HEIGHT; y++)
-									for (int x = 0; x < MapDocument.WIDTH; x++)
-									{
-										var tile = map.Tiles[layers][y][x];
-
-										TileDefinition tileDefinition = doc.Tilesets[tile.Tileset].Tiles[tile.TileId];
-
-										bw.Write((byte) tileDefinition.Collision);
-									}
-						}
+						for (int l = 0; l < MapDocument.LAYERS; l++)
+							for (int y = 0; y < MapDocument.HEIGHT; y++)
+								for (int x = 0; x < MapDocument.WIDTH; x++)
+								{
+									var tile = map.Tiles[l][y][x];
+									var tileDefinition = doc.Tilesets[tile.Tileset].Tiles[tile.TileId];
+									bw.Write((byte)tileDefinition.Collision);
+								}
 					}
 
-				result = true;
+				return true;
 			}
 			catch (Exception ex)
 			{
 				MessageBox.Show(ex.Message);
-				result = false;
+				return false;
 			}
+		}
 
-			return result;
+		// ── Rooms ─────────────────────────────────────────────────────────────────
+
+		private static bool WriteRooms(AreaDocument doc)
+		{
+			try
+			{
+				for (int areaY = 0; areaY < doc.Height; areaY++)
+					for (int areaX = 0; areaX < doc.Width; areaX++)
+					{
+						string chunkDir = ChunkDir(doc, areaX, areaY);
+						string filePath = Path.Combine(chunkDir, "rooms.bin");
+
+						using var fs = new FileStream(filePath, FileMode.Create);
+						using var bw = new BinaryWriter(fs);
+
+						bw.Write(MAGIC_ROOM);
+						bw.Write(VERSION);
+
+						var map = doc.GetMap(areaX, areaY);
+						if (map == null || map.IsGhost) continue;
+
+						for (int l = 0; l < MapDocument.LAYERS; l++)
+							for (int y = 0; y < MapDocument.HEIGHT; y++)
+								for (int x = 0; x < MapDocument.WIDTH; x++)
+								{
+									var tile = map.Tiles[l][y][x];
+									bw.Write((ushort)(tile.RoomID ?? 0));
+								}
+					}
+
+				return true;
+			}
+			catch (Exception ex)
+			{
+				MessageBox.Show(ex.Message);
+				return false;
+			}
+		}
+
+		// ── Helpers ───────────────────────────────────────────────────────────────
+
+		// Returns the chunk layout directory, creating it if needed.
+		private static string ChunkDir(AreaDocument doc, int areaX, int areaY)
+		{
+			string name = doc.Name.ToLower().Replace(' ', '_').Replace('-', '_');
+			string dir = Path.Combine(Layouts, $"{name}_{areaX}_{areaY}");
+			if (!Directory.Exists(dir))
+				Directory.CreateDirectory(dir);
+			return dir;
 		}
 	}
 }

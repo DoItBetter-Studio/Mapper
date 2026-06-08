@@ -90,6 +90,29 @@ namespace Glyphborn.Mapper.Editor
 			Update?.Invoke();
 		}
 
+		public void SetTileRoomID(int layer, int x, int y, uint? roomId)
+		{
+			if (IsGhost) return;
+			ref var current = ref Tiles[layer][y][x];
+			if (current.RoomID == roomId) return;
+
+			var cmd = new TileCommand
+			{
+				Layer = layer,
+				X = x,
+				Y = y,
+				OldTile = current,
+				NewTile = new TileRef { Tileset = current.Tileset, TileId = current.TileId, RoomID = roomId },
+			};
+
+			if (_currentBatch != null) _currentBatch.Add(cmd);
+			else { _undoStack.Push(cmd); _redoStack.Clear(); }
+
+			current.RoomID = roomId;
+			IsDirty = true;
+			Update?.Invoke();
+		}
+
 		public bool Undo()
 		{
 			if (_undoStack.Count == 0) return false;
@@ -147,6 +170,45 @@ namespace Glyphborn.Mapper.Editor
 
 				visited.Add((x, y));
 				SetTile(layer, x, y, fillTile);
+
+				stack.Push((x - 1, y));
+				stack.Push((x + 1, y));
+				stack.Push((x, y - 1));
+				stack.Push((x, y + 1));
+			}
+
+			EndBatch();
+		}
+
+		public void FloodFillRoomID(int layer, int startX, int startY, uint? fillRoomId)
+		{
+			if (startX < 0 || startY < 0 || startX >= WIDTH || startY >= HEIGHT)
+				return;
+
+			uint? targetRoomId = Tiles[layer][startY][startX].RoomID;
+
+			// Nothing to do if it's already the target
+			if (targetRoomId == fillRoomId)
+				return;
+
+			BeginBatch();
+
+			var stack = new Stack<(int x, int y)>();
+			var visited = new HashSet<(int, int)>();
+
+			stack.Push((startX, startY));
+
+			while (stack.Count > 0)
+			{
+				var (x, y) = stack.Pop();
+
+				if (x < 0 || y < 0 || x >= WIDTH || y >= HEIGHT) continue;
+				if (visited.Contains((x, y))) continue;
+
+				if (Tiles[layer][y][x].RoomID != targetRoomId) continue;
+
+				visited.Add((x, y));
+				SetTileRoomID(layer, x, y, fillRoomId);
 
 				stack.Push((x - 1, y));
 				stack.Push((x + 1, y));

@@ -15,11 +15,12 @@ Mapper is responsible for:
 
 - World and map creation workflows  
 - Tile placement, editing, and multi‑layer authoring  
+- **Room Definition & Interior Tagging** — Native zoning and interior metadata orchestration per chunk
 - Multi‑floor and multi‑chunk world construction  
 - Real‑time adjacency visualization  
 - Ghost‑map importing for reference‑based worldbuilding  
 - Deterministic data validation  
-- Exporting structured, byte‑aligned data for Atlas  
+- Exporting structured, byte‑aligned data (geometry, collision, rooms) for Atlas  
 
 Mapper provides a controlled, predictable environment for building and modifying world data while preserving strict architectural integrity.  
 It acts as the bridge between creative workflows and engine‑ready runtime data.
@@ -33,10 +34,10 @@ The Glyphborn ecosystem is intentionally modular.
 Mapper handles:
 
 ✔ World authoring and editing  
-✔ Tile and layer tools  
+✔ Tile, layer, and interior room tools  
 ✔ Ghost‑map reference workflows  
 ✔ Deterministic data validation  
-✔ Export pipelines to Atlas‑compatible binary formats  
+✔ Export pipelines to Atlas‑compatible binary formats (`GBMG`, `GBMC`, `GBTS`, `GBRM`)
 
 Mapper does **not** handle:
 
@@ -59,10 +60,9 @@ Mapper follows the engineering principles established by DoItBetter Studio:
 
 - **Deterministic Output** — Identical input produces identical runtime results  
 - **Strict Data Contracts** — Perfect alignment with Atlas world structures  
-- **Separation of Authoring and Execution**  
-- **Modular Architecture** — Independent repository and versioning  
+- **Separation of Authoring and Execution** - **Modular Architecture** — Independent repository and versioning  
 - **Scalable Tooling** — Designed to grow with the engine  
-- **Bounded Binary Formats** — Geometry and collision data capped to byte‑safe limits (≤255)  
+- **Bounded Binary Formats** — Geometry, room, and collision data capped to byte‑safe limits (≤255)  
 
 Mapper is built like a console‑era tool: predictable, minimal, intentional.
 
@@ -86,14 +86,15 @@ Mapper is **feature‑complete and production‑ready**.
 
 All major systems are implemented:
 
-- Full tile editing  
-- Multi‑layer authoring  
+- Full tile editing & multi‑layer authoring  
+- **Integrated Room System** — Named interior definitions, color-coded swatches, and global layer tagging
+- High-performance flood-fill tile room routing
 - Deterministic undo/redo  
 - Real‑time adjacency rendering  
 - Ghost‑map import system  
 - Mini‑preview generation  
 - Binary save/load  
-- Binary export (geometry, collision, tilesets)  
+- Binary export pipelines (`geometry.bin`, `collision.bin`, `tilesets.bin`, `rooms.bin`)  
 - Byte‑bounded geometry formats  
 - Stable UI and workflow  
 
@@ -104,8 +105,7 @@ Mapper now serves as the foundation for the next development layers:
 - Runtime importer  
 - World assembly pipeline  
 
-The broader Glyphborn engine will eventually be rebranded and released as:
-
+The broader Glyphborn engine will eventually be rebranded and released as:  
 **Damascus — The Steel Editor Suite**
 
 Until official release, this repository is publicly visible for transparency and portfolio purposes but is not open source.
@@ -114,8 +114,7 @@ Until official release, this repository is publicly visible for transparency and
 
 ## Ownership & License
 
-Copyright © 2025–2026  
-**DoItBetter Studio**
+Copyright © 2025–2026  **DoItBetter Studio**
 
 All rights reserved.
 
