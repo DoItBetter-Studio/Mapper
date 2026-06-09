@@ -1,4 +1,5 @@
 ﻿using Glyphborn.Mapper.Editor;
+using Glyphborn.Mapper.Tiles;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -146,9 +147,21 @@ namespace Glyphborn.Mapper.Controls
 			if (tileRef.Tileset >= AreaDocument!.Tilesets.Count) return;
 
 			var tileset = AreaDocument.Tilesets[tileRef.Tileset];
-			if (tileRef.TileId >= tileset.Tiles.Count) return;
 
-			var def = tileset.Tiles[tileRef.TileId];
+			TileDefinition? def = null;
+
+			foreach (var t in tileset.Tiles)
+			{
+				if (t.Id == tileRef.TileId)
+				{
+					def = t;
+					break;
+				}
+			}
+
+			if (def == null)
+				return;
+
 			if (def.Primitive == null) return;
 
 			// Resolve screen position

@@ -16,6 +16,7 @@ namespace Glyphborn.Mapper.Controls
 
 		public int TilePreviewSize = 32;
 		public int TilePadding = 2; // Prevents adjacent dashed lines from blending into solid lines
+		public int Columns = 8; // Default columns when no tiles are present, matching the Editor Dialog's default layout
 
 		public TileSelection? SelectedTile;
 
@@ -31,32 +32,23 @@ namespace Glyphborn.Mapper.Controls
 		{
 			base.OnMouseDown(e);
 
-			int cols = Math.Max(1, Width / TilePreviewSize);
-
 			int col = e.X / TilePreviewSize;
 			int row = e.Y / TilePreviewSize;
-			int index = row * cols + col;
 
-			// Look up the tile by its true Id slot coordinate, matching TilesetEditorDialog
+			// Guard against clicks on the right edge spilling past the last column
+			if (col >= Columns || col < 0 || row < 0) return;
+
+			int index = row * Columns + col;
+
 			TileDefinition? clickedTile = null;
 			foreach (var t in Tiles)
 			{
-				if (t.Id == index)
-				{
-					clickedTile = t;
-					break;
-				}
+				if (t.Id == index) { clickedTile = t; break; }
 			}
 
-			// Strictly ignore clicks on empty/uncreated grid slots
 			if (clickedTile != null)
 			{
-				SelectedTile = new TileSelection(
-					TilesetIndex,
-					(ushort)index,
-					clickedTile
-				);
-
+				SelectedTile = new TileSelection(TilesetIndex, (ushort)index, clickedTile);
 				TileSelected?.Invoke(SelectedTile.Value);
 				Invalidate();
 			}
@@ -69,22 +61,17 @@ namespace Glyphborn.Mapper.Controls
 			var g = e.Graphics;
 			g.Clear(BackColor);
 
-			int cols = Math.Max(1, Width / TilePreviewSize);
-
-			// Find the highest registered Tile ID to ensure the grid can grow past 256 if needed
 			int maxTileId = 0;
 			foreach (var t in Tiles)
 			{
-				if (t.Id > maxTileId)
-					maxTileId = t.Id;
+				if (t.Id > maxTileId) maxTileId = t.Id;
 			}
 
-			// Establish a baseline minimum of 256 slots matching the Dialog's constraints
-			int totalSlots = Math.Max(8, maxTileId + 1);
+			// Use 256 to match the baseline established by GetRequiredHeight()
+			int totalSlots = Math.Max(256, maxTileId + 1);
 
-			// Round the total slots up to fill out the last row cleanly
-			int rows = (int)Math.Ceiling(totalSlots / (float)cols);
-			totalSlots = rows * cols;
+			int rows = (int)Math.Ceiling(totalSlots / (float)Columns);
+			totalSlots = rows * Columns;
 
 			using (var selectedPen = new Pen(Color.FromArgb(14, 116, 202), 2))
 			using (var emptyPen = new Pen(Color.FromArgb(55, 55, 58), 1) { DashStyle = DashStyle.Dash })
@@ -94,8 +81,8 @@ namespace Glyphborn.Mapper.Controls
 			{
 				for (int i = 0; i < totalSlots; i++)
 				{
-					int row = i / cols;
-					int col = i % cols;
+					int row = i / Columns;
+					int col = i % Columns;
 
 					// Compute base coordinate slot (keeps mouse input perfectly aligned on 32px boundaries)
 					var slotRect = new Rectangle(col * TilePreviewSize, row * TilePreviewSize, TilePreviewSize, TilePreviewSize);
@@ -164,17 +151,14 @@ namespace Glyphborn.Mapper.Controls
 
 		public int GetRequiredHeight()
 		{
-			int cols = Math.Max(1, Width / TilePreviewSize);
-
 			int maxTileId = 0;
 			foreach (var t in Tiles)
 			{
-				if (t.Id > maxTileId)
-					maxTileId = t.Id;
+				if (t.Id > maxTileId) maxTileId = t.Id;
 			}
 
 			int totalSlots = Math.Max(256, maxTileId + 1);
-			int rows = (int)Math.Ceiling(totalSlots / (float)cols);
+			int rows = (int)Math.Ceiling(totalSlots / (float)Columns);
 
 			return rows * TilePreviewSize;
 		}
