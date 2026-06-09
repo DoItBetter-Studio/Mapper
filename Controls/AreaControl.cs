@@ -4,6 +4,7 @@ using System.Drawing.Imaging;
 using System.Windows.Forms;
 
 using Glyphborn.Mapper.Editor;
+using Glyphborn.Mapper.Tiles;
 
 namespace Glyphborn.Mapper.Controls
 {
@@ -190,15 +191,20 @@ namespace Glyphborn.Mapper.Controls
 					if (tile.TileId == 0)
 						continue;
 
-					if (tile.Tileset >= area.Tilesets.Count)
-						continue;
-
 					var ts = area.Tilesets[tile.Tileset];
-					if (tile.TileId >= ts.Tiles.Count)
-						continue;
 
-					var def = ts.Tiles[tile.TileId];
-					if (def.Primitive == null)
+					TileDefinition? def = null;
+
+					foreach (var t in ts.Tiles)
+					{
+						if (t.Id == tile.TileId)
+						{
+							def = t;
+							break;
+						}
+					}
+
+					if (def?.Primitive == null)
 						continue;
 
 					var tex = def.Primitive.Texture;
