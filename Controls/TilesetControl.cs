@@ -1,11 +1,10 @@
-﻿using System;
+﻿using Glyphborn.Mapper.Tiles;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Windows.Forms;
-
-using Glyphborn.Mapper.Editor;
-using Glyphborn.Mapper.Tiles;
 
 namespace Glyphborn.Mapper.Controls
 {
@@ -21,6 +20,9 @@ namespace Glyphborn.Mapper.Controls
 		public TileSelection? SelectedTile;
 
 		public event Action<TileSelection>? TileSelected;
+		private int _selectedSlot = -1;
+		private int _hoverSlot = -1;
+
 
 		public TilesetControl()
 		{
@@ -61,6 +63,10 @@ namespace Glyphborn.Mapper.Controls
 			var g = e.Graphics;
 			g.Clear(BackColor);
 
+			using var indexBrush = new SolidBrush(Color.FromArgb(120, 120, 135));
+			using var nameBrush = new SolidBrush(Color.LightGray);
+			using var indexFont = new Font("Segoe UI", 6.5f);
+
 			int maxTileId = 0;
 			foreach (var t in Tiles)
 			{
@@ -81,72 +87,101 @@ namespace Glyphborn.Mapper.Controls
 			{
 				for (int i = 0; i < totalSlots; i++)
 				{
-					int row = i / Columns;
 					int col = i % Columns;
+					int row = i / Columns;
 
-					// Compute base coordinate slot (keeps mouse input perfectly aligned on 32px boundaries)
+					// Slot rect: aligned to raw grid boundaries (keeps mouse hit-testing correct)
 					var slotRect = new Rectangle(col * TilePreviewSize, row * TilePreviewSize, TilePreviewSize, TilePreviewSize);
 
-					// Inset the rendering layout rectangle by the padding constraint so borders don't bleed together
+					// Draw rect: inset by padding so adjacent borders don't bleed together
 					var drawRect = new Rectangle(
 						slotRect.X + TilePadding,
 						slotRect.Y + TilePadding,
-						slotRect.Width - (TilePadding * 2),
-						slotRect.Height - (TilePadding * 2)
-					);
+						slotRect.Width - TilePadding * 2,
+						slotRect.Height - TilePadding * 2);
 
-					// Match tile by its absolute ID slot key, exactly like the Editor Dialog does
-					TileDefinition? tile = null;
-					foreach (var t in Tiles)
+					// Direct index — Tiles[i].Id == i is always guaranteed by EnsureSlots
+					TileDefinition? tile = i < Tiles.Count ? Tiles[i] : null;
+
+					bool isEmpty = IsEmptySlot(i);
+					bool isAir = i == 0;
+
+					if (!isEmpty && tile != null)
 					{
-						if (t.Id == i)
+						// Hover tint
+						if (i == _hoverSlot && i != _selectedSlot)
 						{
-							tile = t;
-							break;
+							using var hoverBrush = new SolidBrush(Color.FromArgb(30, 255, 255, 255));
+							g.FillRectangle(hoverBrush, drawRect);
 						}
-					}
 
-					if (tile != null)
-					{
-						// Render tile asset cleanly inside its padded cell frame
-						if (tile.Primitive != null)
+						if (isAir)
+						{
+							using var hatch = new HatchBrush(HatchStyle.DiagonalCross,
+								Color.FromArgb(50, 50, 65), Color.FromArgb(30, 30, 40));
+							g.FillRectangle(hatch, drawRect);
+						}
+						else if (tile.Primitive?.Texture != null)
 						{
 							try
 							{
-								var thumb = TilePreviewer.GetThumbnail(tile.Primitive.Texture, drawRect.Width, drawRect.Height);
+								var thumb = TextureToBitmap(tile.Primitive.Texture);
 								g.DrawImage(thumb, drawRect);
 							}
-							catch
-							{
-								g.FillRectangle(Brushes.DimGray, drawRect);
-							}
+							catch { g.FillRectangle(Brushes.DimGray, drawRect); }
 						}
 						else
 						{
+							// Named tile but no texture yet — red X so it's clearly incomplete
 							g.FillRectangle(Brushes.Black, drawRect);
+							using var xPen = new Pen(Color.FromArgb(180, 50, 50), 1.5f);
+							g.DrawLine(xPen, drawRect.Left + 3, drawRect.Top + 3,
+											 drawRect.Right - 3, drawRect.Bottom - 3);
+							g.DrawLine(xPen, drawRect.Right - 3, drawRect.Top + 3,
+											 drawRect.Left + 3, drawRect.Bottom - 3);
 						}
 
 						g.DrawRectangle(borderPen, drawRect);
+
+						// Tile name along the bottom strip
+						if (!isAir && !string.IsNullOrEmpty(tile.Name))
+						{
+							var nameRect = new RectangleF(drawRect.X + 2, drawRect.Bottom - 13, drawRect.Width - 4, 12);
+							var fmt = new StringFormat { Trimming = StringTrimming.EllipsisCharacter };
+							g.DrawString(tile.Name, indexFont, nameBrush, nameRect, fmt);
+						}
 					}
 					else
 					{
-						// Render clean, individual empty cells where the dashes remain visible
-						g.DrawRectangle(emptyPen, drawRect);
-
-						g.DrawString("+", font, plusBrush,
-							drawRect.X + (drawRect.Width / 2) - 4,
-							drawRect.Y + (drawRect.Height / 2) - 6);
+						// Named tile but no texture yet — red X so it's clearly incomplete
+						g.FillRectangle(Brushes.Black, drawRect);
+						using var xPen = new Pen(Color.FromArgb(180, 50, 50), 1.5f);
+						g.DrawLine(xPen, drawRect.Left + 3, drawRect.Top + 3,
+										 drawRect.Right - 3, drawRect.Bottom - 3);
+						g.DrawLine(xPen, drawRect.Right - 3, drawRect.Top + 3,
+										 drawRect.Left + 3, drawRect.Bottom - 3);
 					}
 
-					// Draw selection overlay bounding wrapper box slightly outside the draw bounds for visual pop
-					if (SelectedTile is TileSelection sel &&
-						sel.TilesetIndex == TilesetIndex &&
-						sel.TileIndex == i)
+					// Slot index — always visible in the top-left corner
+					g.DrawString(i.ToString(), indexFont, indexBrush, drawRect.X + 2, drawRect.Y + 2);
+
+					// Selection outline — drawn slightly outside drawRect for visual pop
+					if (i == _selectedSlot)
 					{
-						g.DrawRectangle(selectedPen, drawRect.X - 1, drawRect.Y - 1, drawRect.Width + 2, drawRect.Height + 2);
+						g.DrawRectangle(selectedPen,
+							drawRect.X - 1, drawRect.Y - 1,
+							drawRect.Width + 2, drawRect.Height + 2);
 					}
 				}
 			}
+		}
+
+		private bool IsEmptySlot(int slot)
+		{
+			if (slot == 0) return false;
+			if (slot >= Tiles.Count) return true;
+			var t = Tiles[slot];
+			return string.IsNullOrEmpty(t.Name) && t.Primitive == null && t.MeshSourcePath == null;
 		}
 
 		public int GetRequiredHeight()
@@ -161,6 +196,22 @@ namespace Glyphborn.Mapper.Controls
 			int rows = (int)Math.Ceiling(totalSlots / (float)Columns);
 
 			return rows * TilePreviewSize;
+		}
+
+		private static Bitmap TextureToBitmap(Texture tex)
+		{
+			var bmp = new Bitmap(tex.Width, tex.Height, PixelFormat.Format32bppArgb);
+			for (int py = 0; py < tex.Height; py++)
+				for (int px = 0; px < tex.Width; px++)
+				{
+					uint p = tex.Pixels[py * tex.Width + px];
+					bmp.SetPixel(px, py, Color.FromArgb(
+						(int)(p >> 24 & 0xFF),
+						(int)(p >> 16 & 0xFF),
+						(int)(p >> 8 & 0xFF),
+						(int)(p & 0xFF)));
+				}
+			return bmp;
 		}
 	}
 

@@ -262,13 +262,6 @@ namespace Glyphborn.Mapper
 					slotRect.Width - CellPadding * 2,
 					slotRect.Height - CellPadding * 2);
 
-				// Inner content area — leaves room for the index label at the top
-				var innerRect = new Rectangle(
-					drawRect.X,
-					drawRect.Y + 14,
-					drawRect.Width,
-					drawRect.Height - 14);
-
 				// Direct index — Tiles[i].Id == i is always guaranteed by EnsureSlots
 				TileDefinition? tile = i < _tileset.Tiles.Count ? _tileset.Tiles[i] : null;
 
