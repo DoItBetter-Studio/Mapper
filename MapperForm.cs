@@ -56,7 +56,6 @@ namespace Glyphborn.Mapper
 			};
 
 			root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 288));
-			//root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 134));
 			root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 			root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 400));
 

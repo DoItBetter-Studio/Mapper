@@ -1,14 +1,14 @@
-﻿using System;
+﻿using Glyphborn.Mapper.Editor;
+using Glyphborn.Mapper.Maths;
+using Glyphborn.Mapper.Tiles;
+using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
-
-using Glyphborn.Mapper.Editor;
-using Glyphborn.Mapper.Maths;
-using Glyphborn.Mapper.Tiles;
 
 namespace Glyphborn.Mapper
 {
@@ -56,6 +56,11 @@ namespace Glyphborn.Mapper
 		private PictureBox? _previewBox;
 		private Button? _clearSlotButton;
 
+		// ── Variant sub-panel controls ────────────────────────────────────────
+		private Panel? _variantPanel;
+		private Label? _previewLabel; // Track this so we can move it
+		private int _sharedBottomY;   // Remembers where the common controls end
+
 		// =====================================================================
 		//  Construction
 		// =====================================================================
@@ -91,7 +96,6 @@ namespace Glyphborn.Mapper
 					Id = 0,
 					Name = "Air",
 					Collision = CollisionType.None,
-					Primitive = null
 				});
 			}
 		}
@@ -107,7 +111,17 @@ namespace Glyphborn.Mapper
 					MessageBoxButtons.YesNo,
 					MessageBoxIcon.Warning);
 				if (r == DialogResult.No)
+				{
 					e.Cancel = true;
+					return;
+				}
+			}
+
+			// FIX: Prevent residual GDI+ handle leakage when closing down the window
+			if (!e.Cancel && _previewBox?.Image != null)
+			{
+				_previewBox.Image.Dispose();
+				_previewBox.Image = null;
 			}
 		}
 
@@ -162,7 +176,6 @@ namespace Glyphborn.Mapper
 		//  Grid panel (left)
 		// =====================================================================
 
-		// Avoids reflection — DoubleBuffered is protected on Control
 		private sealed class BufferedPanel : Panel
 		{
 			public BufferedPanel() { DoubleBuffered = true; }
@@ -252,61 +265,55 @@ namespace Glyphborn.Mapper
 				int col = i % Columns;
 				int row = i / Columns;
 
-				// Slot rect: aligned to raw grid boundaries (keeps mouse hit-testing correct)
 				var slotRect = new Rectangle(col * CellSize, row * CellSize, CellSize, CellSize);
 
-				// Draw rect: inset by padding so adjacent borders don't bleed together
 				var drawRect = new Rectangle(
 					slotRect.X + CellPadding,
 					slotRect.Y + CellPadding,
 					slotRect.Width - CellPadding * 2,
 					slotRect.Height - CellPadding * 2);
 
-				// Direct index — Tiles[i].Id == i is always guaranteed by EnsureSlots
 				TileDefinition? tile = i < _tileset.Tiles.Count ? _tileset.Tiles[i] : null;
+				RenderPrimitive? visual = tile?.GetPrimitives().FirstOrDefault();
 
 				bool isEmpty = IsEmptySlot(i);
 				bool isAir = i == 0;
 
 				if (!isEmpty && tile != null)
 				{
-					// Hover tint
 					if (i == _hoverSlot && i != _selectedSlot)
 					{
 						using var hoverBrush = new SolidBrush(Color.FromArgb(30, 255, 255, 255));
 						g.FillRectangle(hoverBrush, drawRect);
 					}
 
-					if (isAir)
+					if (isAir || tile.TileType == TileType.None)
 					{
 						using var hatch = new HatchBrush(HatchStyle.DiagonalCross,
 							Color.FromArgb(50, 50, 65), Color.FromArgb(30, 30, 40));
 						g.FillRectangle(hatch, drawRect);
 					}
-					else if (tile.Primitive?.Texture != null)
+					else if (visual?.Texture != null)
 					{
 						try
 						{
-							var thumb = TextureToBitmap(tile.Primitive.Texture);
+							// FIX: Wrapped in a using statement to destroy unmanaged Bitmap instances on every frame paint
+							using var thumb = TextureToBitmap(visual.Texture);
 							g.DrawImage(thumb, drawRect);
 						}
 						catch { g.FillRectangle(Brushes.DimGray, drawRect); }
 					}
 					else
 					{
-						// Named tile but no texture yet — red X so it's clearly incomplete
 						g.FillRectangle(Brushes.Black, drawRect);
 						using var xPen = new Pen(Color.FromArgb(180, 50, 50), 1.5f);
-						g.DrawLine(xPen, drawRect.Left + 3, drawRect.Top + 3,
-										 drawRect.Right - 3, drawRect.Bottom - 3);
-						g.DrawLine(xPen, drawRect.Right - 3, drawRect.Top + 3,
-										 drawRect.Left + 3, drawRect.Bottom - 3);
+						g.DrawLine(xPen, drawRect.Left + 3, drawRect.Top + 3, drawRect.Right - 3, drawRect.Bottom - 3);
+						g.DrawLine(xPen, drawRect.Right - 3, drawRect.Top + 3, drawRect.Left + 3, drawRect.Bottom - 3);
 					}
 
 					g.DrawRectangle(borderPen, drawRect);
 
-					// Tile name along the bottom strip
-					if (!isAir && !string.IsNullOrEmpty(tile.Name))
+					if (!isAir && tile.TileType != TileType.None && !string.IsNullOrEmpty(tile.Name))
 					{
 						var nameRect = new RectangleF(drawRect.X + 2, drawRect.Bottom - 13, drawRect.Width - 4, 12);
 						var fmt = new StringFormat { Trimming = StringTrimming.EllipsisCharacter };
@@ -315,19 +322,16 @@ namespace Glyphborn.Mapper
 				}
 				else
 				{
-					// Named tile but no texture yet — red X so it's clearly incomplete
-					g.FillRectangle(Brushes.Black, drawRect);
-					using var xPen = new Pen(Color.FromArgb(180, 50, 50), 1.5f);
-					g.DrawLine(xPen, drawRect.Left + 3, drawRect.Top + 3,
-									 drawRect.Right - 3, drawRect.Bottom - 3);
-					g.DrawLine(xPen, drawRect.Right - 3, drawRect.Top + 3,
-									 drawRect.Left + 3, drawRect.Bottom - 3);
+					// FIX: Restored unallocated palette block view styling instead of the erroneous red X copy-paste error
+					g.DrawRectangle(emptyPen, drawRect);
+
+					int cx = drawRect.X + (drawRect.Width / 2);
+					int cy = drawRect.Y + (drawRect.Height / 2);
+					g.DrawString("+", nameFont, plusBrush, cx - 4, cy - 6);
 				}
 
-				// Slot index — always visible in the top-left corner
 				g.DrawString(i.ToString(), indexFont, indexBrush, drawRect.X + 2, drawRect.Y + 2);
 
-				// Selection outline — drawn slightly outside drawRect for visual pop
 				if (i == _selectedSlot)
 				{
 					g.DrawRectangle(selectedPen,
@@ -353,17 +357,7 @@ namespace Glyphborn.Mapper
 			int slot = SlotAt(e.X, e.Y);
 			if (slot < 0) return;
 
-			if (IsEmptySlot(slot))
-			{
-				var r = MessageBox.Show(
-					$"Create a new tile at slot {slot}?",
-					"Add Tile",
-					MessageBoxButtons.YesNo,
-					MessageBoxIcon.Question);
-				if (r == DialogResult.Yes)
-					CreateTileAtSlot(slot);
-			}
-			else
+			if (!IsEmptySlot(slot))
 			{
 				SelectSlot(slot);
 			}
@@ -378,19 +372,45 @@ namespace Glyphborn.Mapper
 			int slot = SlotAt(pos.X, pos.Y);
 			if (slot < 0) { e.Cancel = true; return; }
 
+			// Safe name resolution: if out of list bounds, it's inherently empty
+			string tileName = "";
+			if (slot < _tileset.Tiles.Count)
+			{
+				var t = _tileset.Tiles[slot];
+				if (!string.IsNullOrEmpty(t.Name))
+				{
+					tileName = t.Name;
+				}
+			}
+
+			string header = slot == 0
+				? "Slot 0 — Air (reserved)"
+				: $"Slot {slot}  —  {tileName}";
+
+			ctx.Items.Add(new ToolStripMenuItem(header) { Enabled = false });
+			ctx.Items.Add(new ToolStripSeparator());
+
 			if (IsEmptySlot(slot))
 			{
-				var addItem = new ToolStripMenuItem($"Add Tile at Slot {slot}");
-				addItem.Click += (_, __) => CreateTileAtSlot(slot);
-				ctx.Items.Add(addItem);
+				var genericTile = new ToolStripMenuItem("Create Generic Tile");
+				genericTile.Click += (_, __) => CreateTileAtSlot(slot, TileType.TileGeneric);
+				ctx.Items.Add(genericTile);
+
+				var animatedTile = new ToolStripMenuItem("Create Animated Tile");
+				animatedTile.Click += (_, __) => CreateTileAtSlot(slot, TileType.TileAnimated);
+				ctx.Items.Add(animatedTile);
+
+				var doorTile = new ToolStripMenuItem("Create Door Tile");
+				doorTile.Click += (_, __) => CreateTileAtSlot(slot, TileType.TileEntityDoor);
+				ctx.Items.Add(doorTile);
+
+				var cropTile = new ToolStripMenuItem("Create Crop Tile");
+				cropTile.Click += (_, __) => CreateTileAtSlot(slot, TileType.TileEntityCrop);
+				ctx.Items.Add(cropTile);
+
 			}
 			else
 			{
-				string header = slot == 0
-					? "Slot 0 — Air (reserved)"
-					: $"Slot {slot}  —  {_tileset.Tiles[slot].Name}";
-				ctx.Items.Add(new ToolStripMenuItem(header) { Enabled = false });
-				ctx.Items.Add(new ToolStripSeparator());
 
 				var selectItem = new ToolStripMenuItem("Select");
 				selectItem.Click += (_, __) => SelectSlot(slot);
@@ -423,14 +443,25 @@ namespace Glyphborn.Mapper
 			LoadTileProperties(_tileset.Tiles[slot]);
 		}
 
-		private void CreateTileAtSlot(int slot)
+		private void CreateTileAtSlot(int slot, TileType type)
 		{
-			EnsureSlots(slot + 1);
+			EnsureSlots(slot);
 
-			var tile = _tileset.Tiles[slot];
+			TileDefinition tile = type switch
+			{
+				TileType.TileGeneric => new TileGeneric(),
+				TileType.TileAnimated => new TileAnimated(),
+				TileType.TileEntityDoor => new TileEntityDoor(),
+				TileType.TileEntityCrop => new TileEntityCrop(),
+				TileType.None => throw new NotImplementedException(),
+				_ => throw new InvalidDataException($"TileType unknown: {type}")
+			};
+
+			tile.Id = (ushort)slot;
 			tile.Name = $"Tile {slot}";
 			tile.Collision = CollisionType.None;
-			// Primitive stays null until a mesh is imported
+
+			_tileset.Tiles.Add( tile );
 
 			_selectedSlot = slot;
 			RefreshCanvasHeight();
@@ -451,14 +482,26 @@ namespace Glyphborn.Mapper
 
 			if (r != DialogResult.Yes) return;
 
-			var tile = _tileset.Tiles[slot];
-			tile.Name = "";
-			tile.Primitive = null;
-			tile.MeshSourcePath = null;
-			tile.TextureSourcePath = null;
-			tile.Collision = CollisionType.None;
+			// FIX 1: Overwrite the subclass instance with a raw base definition.
+			// This resets its internal TileType back to TileType.None so IsEmptySlot() reads it correctly.
+			_tileset.Tiles[slot] = new TileDefinition
+			{
+				Id = (ushort)slot,
+				Name = "",
+				Collision = CollisionType.None
+			};
 
-			if (_selectedSlot == slot)
+			// FIX 2: Cascade truncation loop.
+			// Continually pop elements from the back of the list if they match our empty criteria,
+			// but stop completely before hitting index 0 (the reserved Air tile).
+			while (_tileset.Tiles.Count > 1 && IsEmptySlot(_tileset.Tiles.Count - 1))
+			{
+				_tileset.Tiles.RemoveAt(_tileset.Tiles.Count - 1);
+			}
+
+			// FIX 3: Out-of-bounds safety check for selection.
+			// If the current selection was part of the truncated tail, drop focus immediately.
+			if (_selectedSlot >= _tileset.Tiles.Count || _selectedSlot == slot)
 			{
 				_selectedSlot = -1;
 				ClearPropertiesPanel();
@@ -468,8 +511,6 @@ namespace Glyphborn.Mapper
 			MarkDirty();
 		}
 
-		// Extend _tileset.Tiles to at least `count` entries, padding gaps with
-		// empty placeholders. Tiles[i].Id == i is always true after this call.
 		private void EnsureSlots(int count)
 		{
 			while (_tileset.Tiles.Count < count)
@@ -480,22 +521,16 @@ namespace Glyphborn.Mapper
 					Id = (ushort)id,
 					Name = "",
 					Collision = CollisionType.None,
-					Primitive = null
 				});
 			}
 		}
 
-		// A slot is empty when it has no name AND no mesh data.
-		// EnsureSlots pads with Name = ""   → empty.
-		// CreateTileAtSlot sets Name = "Tile N" → not empty.
-		// ConfirmClearSlot resets Name = ""  → empty again.
-		// Slot 0 (Air) is never empty.
 		private bool IsEmptySlot(int slot)
 		{
 			if (slot == 0) return false;
 			if (slot >= _tileset.Tiles.Count) return true;
 			var t = _tileset.Tiles[slot];
-			return string.IsNullOrEmpty(t.Name) && t.Primitive == null && t.MeshSourcePath == null;
+			return string.IsNullOrEmpty(t.Name) && t.TileType == TileType.None;
 		}
 
 		// =====================================================================
@@ -535,7 +570,6 @@ namespace Glyphborn.Mapper
 
 			panel.Controls.Add(HRule(y)); y += 14;
 
-			// Name
 			panel.Controls.Add(PropLabel("Name:", new Point(12, y)));
 			_nameTextBox = new TextBox
 			{
@@ -548,7 +582,6 @@ namespace Glyphborn.Mapper
 			panel.Controls.Add(_nameTextBox);
 			y += 34;
 
-			// Collision
 			panel.Controls.Add(PropLabel("Collision:", new Point(12, y)));
 			_collisionBox = new ComboBox
 			{
@@ -565,35 +598,20 @@ namespace Glyphborn.Mapper
 
 			panel.Controls.Add(HRule(y)); y += 14;
 
-			// Mesh row
-			_meshLabel = PropLabel("Mesh: (none)", new Point(12, y));
-			_meshLabel.Size = new Size(230, 20);
-			panel.Controls.Add(_meshLabel);
+			// ── THE ACCORDION ZONE STARTS RIGHT HERE NOW ──
+			_variantPanel = new Panel
+			{
+				Location = new Point(0, y),
+				Width = panel.Width,
+				Height = 0,
+				Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top
+			};
+			panel.Controls.Add(_variantPanel);
 
-			_importMeshButton = MakeButton("Import OBJ", 105);
-			_importMeshButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-			_importMeshButton.Enabled = false;
-			_importMeshButton.Click += ImportMesh_Click;
-			panel.Controls.Add(_importMeshButton);
-			int meshBtnY = y - 2;
-			y += 32;
+			_sharedBottomY = y;
 
-			// Texture row
-			_textureLabel = PropLabel("Texture: (none)", new Point(12, y));
-			_textureLabel.Size = new Size(230, 20);
-			panel.Controls.Add(_textureLabel);
-
-			_importTextureButton = MakeButton("Import Texture", 115);
-			_importTextureButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-			_importTextureButton.Enabled = false;
-			_importTextureButton.Click += ImportTexture_Click;
-			panel.Controls.Add(_importTextureButton);
-			int texBtnY = y - 2;
-			y += 42;
-
-			panel.Controls.Add(HRule(y)); y += 14;
-
-			panel.Controls.Add(PropLabel("Preview:", new Point(12, y)));
+			_previewLabel = PropLabel("Preview:", new Point(12, y));
+			panel.Controls.Add(_previewLabel);
 			y += 22;
 
 			_previewBox = new PictureBox
@@ -625,21 +643,71 @@ namespace Glyphborn.Mapper
 			};
 			panel.Controls.Add(_clearSlotButton);
 
-			void PositionImportButtons()
-			{
-				int right = panel.ClientSize.Width - 12;
-				_importMeshButton!.Location = new Point(right - _importMeshButton.Width, meshBtnY);
-				_importTextureButton!.Location = new Point(right - _importTextureButton.Width, texBtnY);
-			}
-
-			panel.Resize += (_, __) => PositionImportButtons();
-			Shown += (_, __) => PositionImportButtons();
-
+			// Cleaned up original PositionImportButtons mechanics since they are now handled dynamically!
 			return panel;
+		}
+
+		private int BuildPrimitiveControlsRow(TileDefinition tile, RenderPrimitive? primitive, int startY, int primitiveIndex = 0)
+		{
+			int y = startY;
+
+			// 1. Mesh Row
+			string meshName = primitive?.MeshSourcePath != null ? Path.GetFileName(primitive.MeshSourcePath) : "(none)";
+			var meshLabel = PropLabel($"Mesh [{primitiveIndex}]: {meshName}", new Point(12, y));
+			meshLabel.Size = new Size(230, 20);
+			_variantPanel!.Controls.Add(meshLabel);
+
+			var meshBtn = MakeButton("Import OBJ", 105);
+			meshBtn.Location = new Point(_variantPanel.Width - 117, y - 2);
+			meshBtn.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+			meshBtn.Click += (_, __) => DynamicImportMesh(tile, primitiveIndex);
+			_variantPanel.Controls.Add(meshBtn);
+			y += 32;
+
+			// 2. Texture Row
+			string texName = primitive?.TextureSourcePath != null ? Path.GetFileName(primitive.TextureSourcePath) : "(none)";
+			var texLabel = PropLabel($"Texture [{primitiveIndex}]: {texName}", new Point(12, y));
+			texLabel.Size = new Size(230, 20);
+			_variantPanel.Controls.Add(texLabel);
+
+			var texBtn = MakeButton("Import Tex", 105);
+			texBtn.Location = new Point(_variantPanel.Width - 117, y - 2);
+			texBtn.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+			texBtn.Enabled = (primitive?.Mesh != null); // Only allow texturing if a mesh is present!
+			texBtn.Click += (_, __) => DynamicImportTexture(tile, primitiveIndex);
+			_variantPanel.Controls.Add(texBtn);
+			y += 42;
+
+			return y - startY; // Returns total layout height consumed by this primitive row
+		}
+
+		private void AdjustLowerLayout(int variantPanelHeight)
+		{
+			if (_variantPanel == null || _previewLabel == null || _previewBox == null || _clearSlotButton == null)
+				return;
+
+			_variantPanel.Height = variantPanelHeight;
+
+			// Pivot point starts right under the variant content zone
+			int currentY = _sharedBottomY + variantPanelHeight;
+
+			// Push down the remaining components natively
+			if (variantPanelHeight > 0) currentY += 14; // Add padding space if variant is populated
+
+			_previewLabel.Location = new Point(12, currentY);
+			currentY += 22;
+
+			_previewBox.Location = new Point(12, currentY);
+			currentY += 144;
+
+			_clearSlotButton.Location = new Point(12, currentY);
 		}
 
 		private void LoadTileProperties(TileDefinition tile)
 		{
+			// Keep the guard clause
+			if (_variantPanel == null || _slotLabel == null) return;
+
 			_ignoreChanges = true;
 
 			bool isEmpty = IsEmptySlot(tile.Id);
@@ -655,19 +723,39 @@ namespace Glyphborn.Mapper
 			_collisionBox!.SelectedItem = tile.Collision;
 			_collisionBox.Enabled = !isAir;
 
-			bool hasMesh = tile.Primitive?.Mesh != null;
+			// --- REMOVED: _importMeshButton and _importTextureButton logic ---
+			// The individual rows now handle their own button states.
 
-			_importMeshButton!.Enabled = !isAir;
-			_importTextureButton!.Enabled = !isAir && hasMesh;
+			if (_previewBox!.Image != null)
+			{
+				_previewBox.Image.Dispose();
+				_previewBox.Image = null;
+			}
 
-			_meshLabel!.Text = "Mesh: " + (tile.MeshSourcePath != null ? Path.GetFileName(tile.MeshSourcePath) : "(none)");
-			_textureLabel!.Text = "Texture: " + (tile.TextureSourcePath != null ? Path.GetFileName(tile.TextureSourcePath) : "(none)");
-
-			_previewBox!.Image = tile.Primitive?.Texture != null
-				? TextureToBitmap(tile.Primitive.Texture)
+			RenderPrimitive? visual = tile.GetPrimitives().FirstOrDefault();
+			_previewBox.Image = visual?.Texture != null
+				? TextureToBitmap(visual.Texture)
 				: null;
 
 			_clearSlotButton!.Enabled = !isAir;
+
+			// Clear previous custom inputs
+			_variantPanel!.Controls.Clear();
+			int variantHeight = 0;
+
+			if (!isAir && !isEmpty)
+			{
+				variantHeight = tile switch
+				{
+					TileGeneric generic => PopulateGenericProperties(generic),
+					TileAnimated animated => PopulateAnimatedProperties(animated),
+					TileEntityDoor door => PopulateDoorProperties(door),
+					TileEntityCrop crop => PopulateCropProperties(crop),
+					_ => 0
+				};
+			}
+
+			AdjustLowerLayout(variantHeight);
 
 			_ignoreChanges = false;
 		}
@@ -680,14 +768,129 @@ namespace Glyphborn.Mapper
 			_nameTextBox!.Text = "";
 			_nameTextBox.Enabled = false;
 			_collisionBox!.Enabled = false;
-			_meshLabel!.Text = "Mesh: (none)";
-			_textureLabel!.Text = "Texture: (none)";
-			_previewBox!.Image = null;
-			_importMeshButton!.Enabled = false;
-			_importTextureButton!.Enabled = false;
+
+			if (_previewBox!.Image != null)
+			{
+				_previewBox.Image.Dispose();
+				_previewBox.Image = null;
+			}
+
 			_clearSlotButton!.Enabled = false;
 
+			_variantPanel!.Controls.Clear();
+			AdjustLowerLayout(0);
+
 			_ignoreChanges = false;
+		}
+
+		private int PopulateGenericProperties(TileGeneric tile)
+		{
+			// Simply display its single primitive layer row at y = 0
+			return BuildPrimitiveControlsRow(tile, tile.Primitive, 0, 0);
+		}
+
+		private int PopulateAnimatedProperties(TileAnimated tile)
+		{
+			int y = 0;
+			_variantPanel!.Controls.Add(PropLabel("Framerate:", new Point(12, y)));
+
+			var input = new NumericUpDown
+			{
+				Location = new Point(100, y - 2),
+				Width = 270,
+				Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top,
+				Minimum = 0,
+				Maximum = 255,
+				Value = tile.FrameRate
+			};
+			input.ValueChanged += (_, __) => { if (!_ignoreChanges) { tile.FrameRate = (byte)input.Value; MarkDirty(); } };
+			_variantPanel.Controls.Add(input);
+			y += 42;
+
+			// Append its primitive row below the numerical input
+			y += BuildPrimitiveControlsRow(tile, tile.Primitive, y, 0);
+			return y;
+		}
+
+		private int PopulateDoorProperties(TileEntityDoor tile)
+		{
+			int y = 0;
+			_variantPanel!.Controls.Add(PropLabel("Framerate:", new Point(12, y)));
+
+			var fpsInput = new NumericUpDown
+			{
+				Location = new Point(100, y - 2),
+				Width = 270,
+				Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top,
+				Minimum = 0,
+				Maximum = 255,
+				Value = tile.FrameRate
+			};
+			fpsInput.ValueChanged += (_, __) => { if (!_ignoreChanges) { tile.FrameRate = (byte)fpsInput.Value; MarkDirty(); } };
+			_variantPanel.Controls.Add(fpsInput);
+			y += 32;
+
+			_variantPanel!.Controls.Add(PropLabel("Open Preview:", new Point(12, y)));
+			var check = new CheckBox
+			{
+				Location = new Point(100, y - 4),
+				Anchor = AnchorStyles.Left | AnchorStyles.Top,
+				Checked = tile.OpenState
+			};
+			check.CheckedChanged += (_, __) => { if (!_ignoreChanges) { tile.OpenState = check.Checked; MarkDirty(); } };
+			_variantPanel.Controls.Add(check);
+			y += 42;
+
+			// Loop through every existing primitive layer in this entity!
+			for (int i = 0; i < tile.Primitives.Count; i++)
+			{
+				y += BuildPrimitiveControlsRow(tile, tile.Primitives[i], y, i);
+			}
+
+			// Add an explicit Append Button so developers can add layers sequentially
+			var addLayerBtn = MakeButton("+ Add Primitive Layer", 358);
+			addLayerBtn.Location = new Point(12, y);
+			addLayerBtn.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top;
+			addLayerBtn.Click += (_, __) => { tile.Primitives.Add(null!); LoadTileProperties(tile); MarkDirty(); };
+			_variantPanel.Controls.Add(addLayerBtn);
+			y += 38;
+
+			return y;
+		}
+
+		private int PopulateCropProperties(TileEntityCrop tile)
+		{
+			int y = 0;
+			_variantPanel!.Controls.Add(PropLabel("Growth Rate:", new Point(12, y)));
+
+			var input = new NumericUpDown
+			{
+				Location = new Point(100, y - 2),
+				Width = 270,
+				Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top,
+				Minimum = 0,
+				Maximum = ushort.MaxValue,
+				Value = tile.GrowthRate
+			};
+			input.ValueChanged += (_, __) => { if (!_ignoreChanges) { tile.GrowthRate = (ushort)input.Value; MarkDirty(); } };
+			_variantPanel.Controls.Add(input);
+			y += 42;
+
+			// Render all available primitive layers
+			for (int i = 0; i < tile.Primitives.Count; i++)
+			{
+				y += BuildPrimitiveControlsRow(tile, tile.Primitives[i], y, i);
+			}
+
+			// Add Append Button for expanding layers
+			var addLayerBtn = MakeButton("+ Add Growth Stage Layer", 358);
+			addLayerBtn.Location = new Point(12, y);
+			addLayerBtn.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top;
+			addLayerBtn.Click += (_, __) => { tile.Primitives.Add(null!); LoadTileProperties(tile); MarkDirty(); };
+			_variantPanel.Controls.Add(addLayerBtn);
+			y += 38;
+
+			return y;
 		}
 
 		private void PropertyChanged(object? sender, EventArgs e)
@@ -701,29 +904,49 @@ namespace Glyphborn.Mapper
 			if (_collisionBox!.SelectedIndex >= 0)
 				tile.Collision = (CollisionType)_collisionBox.SelectedItem!;
 
-			_gridCanvas!.Invalidate(); // keep the cell name in sync as the user types
+			_gridCanvas!.Invalidate();
 			MarkDirty();
 		}
 
 		// =====================================================================
-		//  Mesh / Texture import
+		//  Mesh / Texture import (Updated for Multi-Primitive TileEntities)
 		// =====================================================================
 
-		private void ImportMesh_Click(object? sender, EventArgs e)
+		private void DynamicImportMesh(TileDefinition tile, int index)
 		{
-			if (_selectedSlot < 0 || _selectedSlot >= _tileset.Tiles.Count) return;
-			var tile = _tileset.Tiles[_selectedSlot];
-
-			using var ofd = new OpenFileDialog { Filter = "OBJ Files|*.obj", Title = "Import Mesh" };
+			using var ofd = new OpenFileDialog { Filter = "OBJ Files|*.obj", Title = $"Import Mesh for Primitive [{index}]" };
 			if (ofd.ShowDialog() != DialogResult.OK) return;
 
 			try
 			{
 				var mesh = MeshLoader.LoadOBJ(ofd.FileName);
-				var existingTex = tile.Primitive?.Texture ?? new Texture(1, 1, new uint[] { 0x00000000 });
 
-				tile.Primitive = new RenderPrimitive(mesh, existingTex);
-				tile.MeshSourcePath = ofd.FileName;
+				// Extract fallback texture metadata from current location if it exists
+				var existingPrimitives = tile.GetPrimitives().ToList();
+				RenderPrimitive? currentPrim = index < existingPrimitives.Count ? existingPrimitives[index] : null;
+				var existingTex = currentPrim?.Texture ?? new Texture(1, 1, new uint[] { 0x00000000 });
+
+				var newVisual = new RenderPrimitive(mesh, existingTex)
+				{
+					MeshSourcePath = ofd.FileName,
+					TextureSourcePath = currentPrim?.TextureSourcePath
+				};
+
+				if (tile is TileEntity entity)
+				{
+					if (index < entity.Primitives.Count)
+						entity.Primitives[index] = newVisual;
+					else
+						entity.Primitives.Add(newVisual);
+				}
+				else if (tile is TileGeneric generic)
+				{
+					generic.Primitive = newVisual;
+				}
+				else if (tile is TileAnimated animated)
+				{
+					animated.Primitive = newVisual;
+				}
 
 				LoadTileProperties(tile);
 				_gridCanvas!.Invalidate();
@@ -735,28 +958,42 @@ namespace Glyphborn.Mapper
 			}
 		}
 
-		private void ImportTexture_Click(object? sender, EventArgs e)
+		private void DynamicImportTexture(TileDefinition tile, int index)
 		{
-			if (_selectedSlot < 0 || _selectedSlot >= _tileset.Tiles.Count) return;
-			var tile = _tileset.Tiles[_selectedSlot];
-
-			using var ofd = new OpenFileDialog
-			{
-				Filter = "Image Files|*.png;*.jpg;*.bmp",
-				Title = "Import Texture"
-			};
+			using var ofd = new OpenFileDialog { Filter = "Image Files|*.png;*.jpg;*.bmp", Title = $"Import Texture for Primitive [{index}]" };
 			if (ofd.ShowDialog() != DialogResult.OK) return;
 
 			try
 			{
-				if (tile.Primitive == null)
-					throw new InvalidOperationException("Import a mesh before importing a texture.");
-
 				using var bmp = new Bitmap(ofd.FileName);
 				var texture = BitmapToTexture(bmp);
 
-				tile.Primitive = new RenderPrimitive(tile.Primitive.Mesh, texture);
-				tile.TextureSourcePath = ofd.FileName;
+				if (tile is TileEntity entity)
+				{
+					var currentMesh = entity.Primitives[index].Mesh;
+					var currentMeshPath = entity.Primitives[index].MeshSourcePath;
+					entity.Primitives[index] = new RenderPrimitive(currentMesh, texture)
+					{
+						MeshSourcePath = currentMeshPath,
+						TextureSourcePath = ofd.FileName
+					};
+				}
+				else if (tile is TileGeneric generic && generic.Primitive != null)
+				{
+					generic.Primitive = new RenderPrimitive(generic.Primitive.Mesh, texture)
+					{
+						MeshSourcePath = generic.Primitive.MeshSourcePath,
+						TextureSourcePath = ofd.FileName
+					};
+				}
+				else if (tile is TileAnimated animated && animated.Primitive != null)
+				{
+					animated.Primitive = new RenderPrimitive(animated.Primitive.Mesh, texture)
+					{
+						MeshSourcePath = animated.Primitive.MeshSourcePath,
+						TextureSourcePath = ofd.FileName
+					};
+				}
 
 				LoadTileProperties(tile);
 				_gridCanvas!.Invalidate();

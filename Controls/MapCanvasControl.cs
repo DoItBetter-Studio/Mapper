@@ -15,7 +15,6 @@ namespace Glyphborn.Mapper.Controls
 		public MapDocument? MapDocument;
 		public EditorState? State;
 
-
 		private bool _isPainting;
 		private bool _isErasing;
 		private MapEdge _hoverEdge = MapEdge.Inside;
@@ -159,10 +158,8 @@ namespace Glyphborn.Mapper.Controls
 				}
 			}
 
-			if (def == null)
+			if (def == null || def.TileType == TileType.None)
 				return;
-
-			if (def.Primitive == null) return;
 
 			// Resolve screen position
 			int px, py;
@@ -190,7 +187,7 @@ namespace Glyphborn.Mapper.Controls
 
 			// Draw tile texture
 			var dest = new Rectangle(px, py, tileSize, tileSize);
-			var preview = TilePreviewer.GetPreview(def.Primitive.Texture);
+			var preview = TilePreviewer.GetPreview(def.GetPrimitives().FirstOrDefault()!.Texture);
 
 			if (alpha < 1.0f)
 			{

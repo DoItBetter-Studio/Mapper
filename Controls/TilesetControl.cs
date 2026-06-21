@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace Glyphborn.Mapper.Controls
@@ -48,7 +49,7 @@ namespace Glyphborn.Mapper.Controls
 				if (t.Id == index) { clickedTile = t; break; }
 			}
 
-			if (clickedTile != null)
+			if (clickedTile != null && (clickedTile.GetPrimitives().FirstOrDefault() != null || clickedTile.Id == 0))
 			{
 				SelectedTile = new TileSelection(TilesetIndex, (ushort)index, clickedTile);
 				TileSelected?.Invoke(SelectedTile.Value);
@@ -115,36 +116,41 @@ namespace Glyphborn.Mapper.Controls
 							g.FillRectangle(hoverBrush, drawRect);
 						}
 
-						if (isAir)
+						// Render empty/air slots using a clean background diagonal hatch
+						if (isAir || tile.TileType == TileType.None)
 						{
 							using var hatch = new HatchBrush(HatchStyle.DiagonalCross,
 								Color.FromArgb(50, 50, 65), Color.FromArgb(30, 30, 40));
 							g.FillRectangle(hatch, drawRect);
 						}
-						else if (tile.Primitive?.Texture != null)
-						{
-							try
-							{
-								var thumb = TextureToBitmap(tile.Primitive.Texture);
-								g.DrawImage(thumb, drawRect);
-							}
-							catch { g.FillRectangle(Brushes.DimGray, drawRect); }
-						}
 						else
 						{
-							// Named tile but no texture yet — red X so it's clearly incomplete
-							g.FillRectangle(Brushes.Black, drawRect);
-							using var xPen = new Pen(Color.FromArgb(180, 50, 50), 1.5f);
-							g.DrawLine(xPen, drawRect.Left + 3, drawRect.Top + 3,
-											 drawRect.Right - 3, drawRect.Bottom - 3);
-							g.DrawLine(xPen, drawRect.Right - 3, drawRect.Top + 3,
-											 drawRect.Left + 3, drawRect.Bottom - 3);
+							// FIX: Safely retrieve the primary thumbnail component from the mesh collection
+							var firstPrimitive = tile.GetPrimitives().FirstOrDefault();
+							if (firstPrimitive?.Texture != null)
+							{
+								try
+								{
+									// Wrap in a using statement to properly dispose GDI+ Bitmap unmanaged resources
+									using var thumb = TextureToBitmap(firstPrimitive.Texture);
+									g.DrawImage(thumb, drawRect);
+								}
+								catch { g.FillRectangle(Brushes.DimGray, drawRect); }
+							}
+							else
+							{
+								// Named/Logic tile but missing a texture resource — red X indicator
+								g.FillRectangle(Brushes.Black, drawRect);
+								using var xPen = new Pen(Color.FromArgb(180, 50, 50), 1.5f);
+								g.DrawLine(xPen, drawRect.Left + 3, drawRect.Top + 3, drawRect.Right - 3, drawRect.Bottom - 3);
+								g.DrawLine(xPen, drawRect.Right - 3, drawRect.Top + 3, drawRect.Left + 3, drawRect.Bottom - 3);
+							}
 						}
 
 						g.DrawRectangle(borderPen, drawRect);
 
 						// Tile name along the bottom strip
-						if (!isAir && !string.IsNullOrEmpty(tile.Name))
+						if (!isAir && tile.TileType != TileType.None && !string.IsNullOrEmpty(tile.Name))
 						{
 							var nameRect = new RectangleF(drawRect.X + 2, drawRect.Bottom - 13, drawRect.Width - 4, 12);
 							var fmt = new StringFormat { Trimming = StringTrimming.EllipsisCharacter };
@@ -153,13 +159,13 @@ namespace Glyphborn.Mapper.Controls
 					}
 					else
 					{
-						// Named tile but no texture yet — red X so it's clearly incomplete
-						g.FillRectangle(Brushes.Black, drawRect);
-						using var xPen = new Pen(Color.FromArgb(180, 50, 50), 1.5f);
-						g.DrawLine(xPen, drawRect.Left + 3, drawRect.Top + 3,
-										 drawRect.Right - 3, drawRect.Bottom - 3);
-						g.DrawLine(xPen, drawRect.Right - 3, drawRect.Top + 3,
-										 drawRect.Left + 3, drawRect.Bottom - 3);
+						// FIX: Corrected duplicate block copy-paste error.
+						// Unallocated palette slots now draw a clean dashed border with a centered plus sign.
+						g.DrawRectangle(emptyPen, drawRect);
+
+						int cx = drawRect.X + (drawRect.Width / 2);
+						int cy = drawRect.Y + (drawRect.Height / 2);
+						g.DrawString("+", font, plusBrush, cx - 4, cy - 6);
 					}
 
 					// Slot index — always visible in the top-left corner
@@ -181,7 +187,7 @@ namespace Glyphborn.Mapper.Controls
 			if (slot == 0) return false;
 			if (slot >= Tiles.Count) return true;
 			var t = Tiles[slot];
-			return string.IsNullOrEmpty(t.Name) && t.Primitive == null && t.MeshSourcePath == null;
+			return string.IsNullOrEmpty(t.Name) && t.TileType == TileType.None;
 		}
 
 		public int GetRequiredHeight()

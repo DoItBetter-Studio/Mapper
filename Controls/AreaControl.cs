@@ -1,9 +1,10 @@
-﻿using System;
+﻿using Glyphborn.Mapper.Editor;
+using Glyphborn.Mapper.Tiles;
+using System;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Linq;
 using System.Windows.Forms;
-
-using Glyphborn.Mapper.Editor;
 
 namespace Glyphborn.Mapper.Controls
 {
@@ -171,56 +172,63 @@ namespace Glyphborn.Mapper.Controls
 			graphics.Clear(Color.Black);
 
 			for (int ty = 0; ty < MapDocument.HEIGHT; ty++)
+			{
 				for (int tx = 0; tx < MapDocument.WIDTH; tx++)
 				{
-					TileRef tile = default;
+					Texture? targetTex = null;
 
-					// Find topmost tile
+					// Look from the topmost layer downwards to find the first visible surface
 					for (int l = MapDocument.LAYERS - 1; l >= 0; l--)
 					{
 						var t = map.Tiles[l][ty][tx];
 
-						if (t.TileId != 0)
-						{
-							tile = t;
-							break;
-						}
+						// Guard against unassigned tilesets/tile entries out of range
+						if (t.Tileset >= area.Tilesets.Count)
+							continue;
+
+						var ts = area.Tilesets[t.Tileset];
+						if (t.TileId >= ts.Tiles.Count)
+							continue;
+
+						var def = ts.Tiles[t.TileId];
+
+						// Skip air/empty slots entirely
+						if (def.TileType == TileType.None)
+							continue;
+
+						// Safe extraction from the multi-primitive mesh layout
+						var firstPrimitive = def.GetPrimitives().FirstOrDefault();
+						if (firstPrimitive?.Texture == null)
+							continue; // It's a non-visual logic/trigger tile; keep looking down layers
+
+						// We found our highest visual tile!
+						targetTex = firstPrimitive.Texture;
+						break;
 					}
 
-					if (tile.TileId == 0)
+					// If no visual tile exists in this column, leave it as the background color (Black)
+					if (targetTex == null)
 						continue;
 
-					if (tile.Tileset >= area.Tilesets.Count)
-						continue;
+					var src = targetTex.Pixels;
 
-					var ts = area.Tilesets[tile.Tileset];
-					if (tile.TileId >= ts.Tiles.Count)
-						continue;
+					// Sample center pixel (fast & stable preview rendering)
+					int sx = targetTex.Width / 2;
+					int sy = targetTex.Height / 2;
 
-					var def = ts.Tiles[tile.TileId];
-					if (def.Primitive == null)
-						continue;
+					uint pixelColor = src[sy * targetTex.Width + sx];
 
-					var tex = def.Primitive.Texture;
-					var src = tex.Pixels;
-
-					// Sample center pixel (fast & stable)
-					int sx = tex.Width / 2;
-					int sy = tex.Height / 2;
-
-					uint pixelColor = src[sy * tex.Width + sx];
-
-					byte a = (byte) (pixelColor >> 24);
-					byte r = (byte) (pixelColor >> 16);
-					byte g = (byte) (pixelColor >> 8);
-					byte b = (byte) (pixelColor);
+					byte a = (byte)(pixelColor >> 24);
+					byte r = (byte)(pixelColor >> 16);
+					byte g = (byte)(pixelColor >> 8);
+					byte b = (byte)(pixelColor);
 
 					Color c = Color.FromArgb(a, r, g, b);
 
 					using var brush = new SolidBrush(c);
-
 					graphics.FillRectangle(brush, tx * TILE_PIXELS, ty * TILE_PIXELS, TILE_PIXELS, TILE_PIXELS);
 				}
+			}
 
 			return bmp;
 		}

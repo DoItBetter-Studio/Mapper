@@ -29,14 +29,6 @@ namespace Glyphborn.Mapper.Controls
 			ForeColor = Color.White;
 		}
 
-		public void SetRooms(List<RoomDefinition> rooms)
-		{
-			_rooms = rooms;
-			_selectedIndex = -1;
-			UpdateHeight();
-			Invalidate();
-		}
-
 		public void Refresh(List<RoomDefinition> rooms)
 		{
 			// Preserve selection across refreshes if the room still exists

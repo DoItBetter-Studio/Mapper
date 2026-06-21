@@ -1,12 +1,11 @@
-﻿using System;
+﻿using Glyphborn.Mapper.Editor;
+using Glyphborn.Mapper.Tiles;
+using System;
+using System.ComponentModel;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Numerics;
 using System.Windows.Forms;
-
-using Glyphborn.Mapper.Editor;
-using Glyphborn.Mapper.Tiles;
-using System.ComponentModel;
 
 namespace Glyphborn.Mapper.Controls
 {
@@ -34,6 +33,9 @@ namespace Glyphborn.Mapper.Controls
 		private Timer _timer;
 
 		private SolidBrush _brush;
+
+		private const int TilePixelSize = 32;
+		private readonly long _startTimestamp = Environment.TickCount64;
 
 		public Viewport3D()
 		{
@@ -219,8 +221,6 @@ namespace Glyphborn.Mapper.Controls
 			// Blit final image once
 			e.Graphics.DrawImage(_backbuffer, 0, 0);
 
-			//DrawMap(g);
-
 			// Draw debug info
 			g.DrawString($"Eye: {eye.X:F1}, {eye.Y:F1}, {eye.Z:F1}", Font, Brushes.White, 10, 10);
 			g.DrawString($"Distance: {_distance:F1}", Font, Brushes.White, 10, 25);
@@ -276,53 +276,22 @@ namespace Glyphborn.Mapper.Controls
 
 		private unsafe void DrawMap(byte* ptr, int stride)
 		{
-			for (int ay = 0; ay < Area!.Height; ay++)
+			if (Area == null) return;
+
+			for (int ay = 0; ay < Area.Height; ay++)
 			{
 				for (int ax = 0; ax < Area.Width; ax++)
 				{
 					var map = Area.GetMap(ax, ay);
-					int offsetX = ax * MapDocument.WIDTH;
-					int offsetY = ay * MapDocument.HEIGHT;
 
-					if (map == null)
+					// Ghost chunks have no actual layout contents; skip rendering them entirely
+					if (map == null || map.IsGhost)
 						continue;
 
-					// Draw each tile as a wireframe cube
-					for (int layer = 0; layer < MapDocument.LAYERS; layer++)
-					{
-						for (int y = 0; y < MapDocument.HEIGHT; y++)
-						{
-							for (int x = 0; x < MapDocument.WIDTH; x++)
-							{
-								var tileRef = map.Tiles[layer][y][x];
-
-								if (tileRef.TileId == 0)
-									continue;
-
-								TileDefinition def = Area.Tilesets[tileRef.Tileset].Tiles[tileRef.TileId];
-
-								DrawMesh(def.Primitive!, new Vector3(x + offsetX, layer, y + offsetY), ptr, stride);
-							}
-						}
-					}
-				}
-			}
-		}
-
-		private unsafe void DrawMap(Graphics g)
-		{
-			for (int ay = 0; ay < Area!.Height; ay++)
-			{
-				for (int ax = 0; ax < Area.Width; ax++)
-				{
-					var map = Area.GetMap(ax, ay);
 					int offsetX = ax * MapDocument.WIDTH;
 					int offsetY = ay * MapDocument.HEIGHT;
 
-					if (map == null)
-						return;
-
-					// Draw each tile as a wireframe cube
+					// Draw each tile based on its layer depth and multi-primitive collection
 					for (int layer = 0; layer < MapDocument.LAYERS; layer++)
 					{
 						for (int y = 0; y < MapDocument.HEIGHT; y++)
@@ -331,10 +300,42 @@ namespace Glyphborn.Mapper.Controls
 							{
 								var tileRef = map.Tiles[layer][y][x];
 
-								if (tileRef.TileId == 0)
+								// Bounds checks to protect against mismatching or updated tilesets
+								if (tileRef.Tileset >= Area.Tilesets.Count)
 									continue;
 
-								DrawCube(g, new Vector3(x + offsetX, layer, y + offsetY), 1.0f);
+								var ts = Area.Tilesets[tileRef.Tileset];
+								if (tileRef.TileId >= ts.Tiles.Count)
+									continue;
+
+								var def = ts.Tiles[tileRef.TileId];
+								if (def == null || def.TileType == TileType.None)
+									continue;
+
+								// Vector placement for the specific tile coordinate
+								var tileWorldPos = new Vector3(x + offsetX, layer, y + offsetY);
+
+
+								// Iterate and draw every visual component layer belonging to this tile definition
+								foreach (var primitive in def.GetPrimitives())
+								{
+									if (primitive == null)
+										continue;
+
+									int frameIndex = 0;
+									int frameHeight = primitive.Texture.Height; // non-animated: one "frame" = full texture
+
+									if (def is TileAnimated animated && animated.FrameRate > 0)
+									{
+										frameHeight = TilePixelSize;
+										int frameCount = Math.Max(1, primitive.Texture.Height / frameHeight);
+										int ticksPerFrame = Math.Max(1, 60 / animated.FrameRate);
+										long elapsedTicks = (Environment.TickCount64 - _startTimestamp) * 60 / 1000;
+										frameIndex = (int)(elapsedTicks / ticksPerFrame) % frameCount;
+									}
+
+									DrawMesh(primitive, tileWorldPos, ptr, stride, frameIndex, frameHeight);
+								}
 							}
 						}
 					}
@@ -342,79 +343,7 @@ namespace Glyphborn.Mapper.Controls
 			}
 		}
 
-		private void DrawCube(Graphics g, Vector3 center, float size)
-		{
-			float h = size * 0.5f;
-
-			Vector3[] corners =
-			{
-				new(-h, -h, -h), new(h, -h, -h),  // Bottom front-left, front-right
-				new(h,  h, -h), new(-h,  h, -h),  // Top front-right, front-left
-				new(-h, -h,  h), new(h, -h,  h),  // Bottom back-left, back-right
-				new(h,  h,  h), new(-h,  h,  h),  // Top back-right, back-left
-			};
-
-			// Transform to world position
-			for (int i = 0; i < corners.Length; i++)
-			{
-				corners[i] += center;
-			}
-
-			// Transform to NDC (clip space after perspective divide)
-			Vector3[] clipSpace = new Vector3[8];
-			for (int i = 0; i < 8; i++)
-			{
-				clipSpace[i] = Transform(corners[i]);
-			}
-
-			// Cull if all points are outside the [0,1] depth range
-			bool allOutside = true;
-			for (int i = 0; i < 8; i++)
-			{
-				float z = clipSpace[i].Z;
-				if (z >= 0.0f && z <= 1.0f)
-				{
-					allOutside = false;
-					break;
-				}
-			}
-
-			if (allOutside)
-				return;
-
-			// Project to screen space
-			PointF[] screen = new PointF[8];
-			for (int i = 0; i < 8; i++)
-			{
-				screen[i] = Project(clipSpace[i]);
-			}
-
-			// Draw edges
-			using (var pen = new Pen(Color.FromArgb(100, 150, 200), 1))
-			{
-				void DrawEdge(int a, int b)
-				{
-					float za = clipSpace[a].Z;
-					float zb = clipSpace[b].Z;
-
-					// Only draw if both endpoints are within the visible depth range
-					if (za >= 0.0f && za <= 1.0f &&
-						zb >= 0.0f && zb <= 1.0f)
-					{
-						g.DrawLine(pen, screen[a], screen[b]);
-					}
-				}
-
-				// Bottom face
-				DrawEdge(0, 1); DrawEdge(1, 2); DrawEdge(2, 3); DrawEdge(3, 0);
-				// Top face
-				DrawEdge(4, 5); DrawEdge(5, 6); DrawEdge(6, 7); DrawEdge(7, 4);
-				// Vertical edges
-				DrawEdge(0, 4); DrawEdge(1, 5); DrawEdge(2, 6); DrawEdge(3, 7);
-			}
-		}
-
-		unsafe void DrawMesh(RenderPrimitive prim, Vector3 worldPos, byte* ptr, int stride)
+		unsafe void DrawMesh(RenderPrimitive prim, Vector3 worldPos, byte* ptr, int stride, int frameIndex = 0, int frameHeight = 32)
 		{
 			var mesh = prim.Mesh;
 
@@ -457,14 +386,12 @@ namespace Glyphborn.Mapper.Controls
 					new Vector3(screen[a].X, screen[a].Y, za),
 					new Vector3(screen[b].X, screen[b].Y, zb),
 					new Vector3(screen[c].X, screen[c].Y, zc),
-
 					faceNormal,
-
 					new Vector2(mesh.Vertices[a].UV.x, mesh.Vertices[a].UV.y),
 					new Vector2(mesh.Vertices[b].UV.x, mesh.Vertices[b].UV.y),
 					new Vector2(mesh.Vertices[c].UV.x, mesh.Vertices[c].UV.y),
 					prim.Texture,
-					ptr, stride
+					ptr, stride, frameIndex, frameHeight
 				);
 			}
 		}
@@ -474,7 +401,8 @@ namespace Glyphborn.Mapper.Controls
 			Vector3 faceNormal,
 			Vector2 uv0, Vector2 uv1, Vector2 uv2,
 			Texture texture,
-			byte* ptr, int stride)
+			byte* ptr, int stride,
+			int frameIndex = 0, int frameHeight = 32)
 		{
 			// 2D backface culling
 			Vector2 a = new(p1.X - p0.X, p1.Y - p0.Y);
@@ -548,7 +476,7 @@ namespace Glyphborn.Mapper.Controls
 					float u = uv0.X * w0 + uv1.X * w1 + uv2.X * w2;
 					float v = uv0.Y * w0 + uv1.Y * w1 + uv2.Y * w2;
 
-					uint color = texture.Sample(u, v);
+					uint color = texture.SampleFrame(u, v, frameIndex, frameHeight);
 
 					uint al = (color >> 24) & 0xFF;
 					uint r = (color >> 16) & 0xFF;

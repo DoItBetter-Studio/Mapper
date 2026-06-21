@@ -1,5 +1,6 @@
 ﻿using System;
 using System.IO;
+using System.Linq;
 using System.Windows.Forms;
 
 using Glyphborn.Mapper.Tiles;
@@ -13,7 +14,7 @@ namespace Glyphborn.Mapper.Editor
 		private const uint MAGIC_TILESETS = 0x53544C47;  // "GBTS"
 		private const uint MAGIC_ROOM = 0x524D4247;  // "GBRM"
 
-		private const ushort VERSION = 1;
+		private const ushort VERSION = 2;
 
 		private static string DataRoot => Path.Combine(AppContext.BaseDirectory, "../..", "data");
 		private static string Layouts => Path.Combine(DataRoot, "layouts");
@@ -83,31 +84,41 @@ namespace Glyphborn.Mapper.Editor
 
 		private static void WriteTile(BinaryWriter bw, TileDefinition tile)
 		{
-			if (tile.Primitive != null)
+			// 1. Write the TileType byte first so the runtime loader can construct the correct tile class
+			bw.Write((byte)tile.TileType);
+
+			var primitives = tile.GetPrimitives().ToList();
+			bw.Write((byte)primitives.Count);
+
+			if (tile.TileType != TileType.None)
 			{
-				bw.Write((byte)tile.Primitive.Mesh.Vertices.Length);
-				foreach (var v in tile.Primitive.Mesh.Vertices)
+				foreach (var visual in primitives)
 				{
-					bw.Write(v.Position.x);
-					bw.Write(v.Position.y);
-					bw.Write(v.Position.z);
-					bw.Write(v.UV.x);
-					bw.Write(v.UV.y);
+					bw.Write((byte)visual.Mesh.Vertices.Length);
+					foreach (var v in visual.Mesh.Vertices)
+					{
+						bw.Write(v.Position.x);
+						bw.Write(v.Position.y);
+						bw.Write(v.Position.z);
+						bw.Write(v.UV.x);
+						bw.Write(v.UV.y);
+					}
+
+					bw.Write((byte)visual.Mesh.Indices.Length);
+					foreach (var idx in visual.Mesh.Indices)
+						bw.Write(idx);
+
+					bw.Write((ushort)visual.Texture.Width);
+					bw.Write((ushort)visual.Texture.Height);
+					foreach (var pixel in visual.Texture.Pixels)
+						bw.Write(pixel);
 				}
-
-				bw.Write((byte)tile.Primitive.Mesh.Indices.Length);
-				foreach (var idx in tile.Primitive.Mesh.Indices)
-					bw.Write(idx);
-
-				bw.Write((ushort)tile.Primitive.Texture.Width);
-				bw.Write((ushort)tile.Primitive.Texture.Height);
-				foreach (var pixel in tile.Primitive.Texture.Pixels)
-					bw.Write(pixel);
 			}
 			else
 			{
-				bw.Write((byte)0);   // vertex_count
-				bw.Write((byte)0);   // index_count
+				// Clear structure padding markers for empty slots/air tiles
+				bw.Write((byte)0);     // vertex_count
+				bw.Write((byte)0);     // index_count
 				bw.Write((ushort)0);   // texture_width
 				bw.Write((ushort)0);   // texture_height
 			}
