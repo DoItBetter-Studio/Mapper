@@ -1,86 +1,98 @@
-﻿using System;
-using System.Drawing;
-using System.Numerics;
-using System.Windows.Forms;
-
-using Glyphborn.Mapper.Controls;
+﻿using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Damascus.Mapper.Controls;
+using Damascus.Mapper.Theme;
 using Glyphborn.Mapper.Editor;
+using System;
+using System.Numerics;
 
-namespace Glyphborn.Mapper
+namespace Damascus.Mapper.Dialogs
 {
-	public partial class ViewportDialog : Form
+	sealed class ViewportDialog : Window
 	{
-		private readonly Viewport3D _view;
-		private readonly TrackBar _yaw;
-		private readonly TrackBar _pitch;
+		private ViewportControl _view;
+		private readonly Slider _yaw;
+		private readonly Slider _pitch;
 
 		public ViewportDialog(AreaDocument area)
 		{
-			Text = "3D Map Preview";
+			Title = "3D Map Preview";
 			Width = 900;
 			Height = 700;
-			StartPosition = FormStartPosition.CenterParent;
-			BackColor = Color.Black;
+			Background = Brushes.Black;
+			WindowStartupLocation = WindowStartupLocation.CenterOwner;
+			Icon = MapperTheme.Icon;
 
-			_view = new Viewport3D
+			var root = new Grid();
+
+			_view = new ViewportControl
 			{
-				Dock = DockStyle.Fill,
 				Area = area
 			};
 
-			Controls.Add(_view);
+			root.Children.Add(_view);
 
-			// Overlay controls
-			_yaw = new TrackBar
+			var overlay = new StackPanel
+			{
+				Orientation = Orientation.Vertical,
+				Spacing = 12,
+				Width = 200,
+				HorizontalAlignment = HorizontalAlignment.Right,
+				VerticalAlignment = VerticalAlignment.Top,
+				Margin = new Thickness(0, 8, 24, 0)
+			};
+
+			_yaw = new Slider
 			{
 				Minimum = -180,
 				Maximum = 180,
-				Value = 45,
-				TickFrequency = 30,
-				Width = 200,
-				Height = 20,
-				Top = 8,
-				Anchor = AnchorStyles.Top | AnchorStyles.Right,
-				Left = Width - 200 - 24
+				Value = 45
 			};
 
-			_pitch = new TrackBar
+			_pitch = new Slider
 			{
 				Minimum = -89,
 				Maximum = 89,
-				Value = -30,
-				TickFrequency = 15,
-				Width = 200,
-				Height = 20,
-				Top = 58,
-				Anchor = AnchorStyles.Top | AnchorStyles.Right,
-				Left = Width - 200 - 24
+				Value = -30
 			};
 
-			Controls.Add(_yaw);
-			Controls.Add(_pitch);
+			overlay.Children.Add(_yaw);
+			overlay.Children.Add(_pitch);
 
-			_yaw.BringToFront();
-			_pitch.BringToFront();
+			root.Children.Add(overlay);
 
-			_yaw.ValueChanged += (_, __) => UpdateLight();
-			_pitch.ValueChanged += (_, __) => UpdateLight();
+			Content = root;
+
+			_yaw.PropertyChanged += (_, e) =>
+			{
+				if (e.Property == RangeBase.ValueProperty)
+					UpdateLight();
+			};
+
+			_pitch.PropertyChanged += (_, e) =>
+			{
+				if (e.Property == RangeBase.ValueProperty)
+					UpdateLight();
+			};
 
 			UpdateLight();
 		}
 
 		private void UpdateLight()
 		{
-			float yaw = _yaw.Value * MathF.PI / 180f;
-			float pitch = _pitch.Value * MathF.PI / 180f;
+			float yaw = (float)_yaw.Value * MathF.PI / 180f;
+			float pitch = (float)_pitch.Value * MathF.PI / 180f;
 
-			_view.LightDirection = Vector3.Normalize(new Vector3(
-				MathF.Cos(yaw) * MathF.Cos(pitch),
-				MathF.Sin(pitch),
-				MathF.Sin(yaw) * MathF.Cos(pitch)
-			));
+			_view.LightDirection = Vector3.Normalize(
+				new Vector3(
+					MathF.Cos(yaw) * MathF.Cos(pitch),
+					MathF.Sin(pitch),
+					MathF.Sin(yaw) * MathF.Cos(pitch)));
 
-			_view.Invalidate();
+			_view.InvalidateVisual();
 		}
 	}
 }

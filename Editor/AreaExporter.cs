@@ -1,9 +1,9 @@
 ﻿using System;
 using System.IO;
 using System.Linq;
-using System.Windows.Forms;
-
+using Avalonia.Threading;
 using Glyphborn.Mapper.Tiles;
+using MsBox.Avalonia;
 
 namespace Glyphborn.Mapper.Editor
 {
@@ -64,7 +64,7 @@ namespace Glyphborn.Mapper.Editor
 			}
 			catch (Exception ex)
 			{
-				MessageBox.Show(ex.Message);
+				Dispatcher.UIThread.Post(() => MessageBoxManager.GetMessageBoxStandard("Error", ex.Message).ShowAsync());
 				return false;
 			}
 		}
@@ -159,7 +159,7 @@ namespace Glyphborn.Mapper.Editor
 			}
 			catch (Exception ex)
 			{
-				MessageBox.Show(ex.Message);
+				Dispatcher.UIThread.Post(() => MessageBoxManager.GetMessageBoxStandard("Error", ex.Message).ShowAsync());
 				return false;
 			}
 		}
@@ -199,7 +199,7 @@ namespace Glyphborn.Mapper.Editor
 			}
 			catch (Exception ex)
 			{
-				MessageBox.Show(ex.Message);
+				Dispatcher.UIThread.Post(() => MessageBoxManager.GetMessageBoxStandard("Error", ex.Message).ShowAsync());
 				return false;
 			}
 		}
@@ -238,7 +238,7 @@ namespace Glyphborn.Mapper.Editor
 			}
 			catch (Exception ex)
 			{
-				MessageBox.Show(ex.Message);
+				Dispatcher.UIThread.Post(() => MessageBoxManager.GetMessageBoxStandard("Error", ex.Message).ShowAsync());
 				return false;
 			}
 		}

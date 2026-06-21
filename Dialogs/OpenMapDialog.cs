@@ -1,136 +1,109 @@
-﻿using System;
-using System.Drawing;
-using System.IO;
-using System.Windows.Forms;
-
+﻿using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Damascus.Mapper.Theme;
 using Glyphborn.Mapper.Editor;
+using System.Diagnostics;
+using System.IO;
 
-namespace Glyphborn.Mapper
+namespace Damascus.Mapper.Dialogs
 {
-	public partial class OpenMapDialog : Form
-	{
-		public AreaDocument? AreaDocument { get; private set; }
+	public sealed record OpenMapResult(AreaDocument Document);
 
-		private ListView _areaView;
+	sealed class OpenMapDialog : Window
+	{
+		private ListBox? _areaView;
 
 		public OpenMapDialog()
 		{
-			Text = "Map Library";
+			Title = "Map Library";
 			Width = 300;
 			Height = 500;
-			FormBorderStyle = FormBorderStyle.FixedDialog;
-			StartPosition = FormStartPosition.CenterParent;
-			MaximizeBox = false;
-			MinimizeBox = false;
-			BackColor = Color.FromArgb(45, 45, 48);
-			ForeColor = Color.White;
+			CanMaximize = false;
+			CanMinimize = false;
+			CanResize = false;
+			WindowStartupLocation = WindowStartupLocation.CenterOwner;
+			Background = MapperTheme.WindowBackground;
+			Foreground = MapperTheme.TextPrimary;
+			Icon = MapperTheme.Icon;
 
 			BuildUI();
 			LoadAreas();
 		}
 
-		private ListView CreateAreaList()
-		{
-			var lv = new ListView
-			{
-				View = View.Details,
-				FullRowSelect = true,
-				MultiSelect = false,
-				Dock = DockStyle.Fill,
-				HeaderStyle = ColumnHeaderStyle.None,
-				BackColor = Color.FromArgb(30, 30, 30),
-				ForeColor = Color.White,
-				BorderStyle = BorderStyle.None
-			};
-
-			lv.Columns.Add("Areas", -2);
-			return lv;
-		}
-
 		private void BuildUI()
 		{
-			var root = new TableLayoutPanel
+			var content = new Grid
 			{
-				Dock = DockStyle.Fill,
-				RowCount = 2
+				RowDefinitions = new RowDefinitions("*, 50")
 			};
 
-			root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-			root.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
+			var listContainer = new DockPanel { Background = MapperTheme.ContainerBackground };
 
-			_areaView = CreateAreaList();
-			root.Controls.Add(Wrap("Area", _areaView), 0, 0);
-
-			var openMapBtn = new Button
+			var header = new TextBlock
 			{
-				Width = 90,
-				Text = "Open Map",
-				Dock = DockStyle.Right,
-				BackColor = Color.FromArgb(45, 45, 45),
-				ForeColor = Color.White,
-				FlatStyle = FlatStyle.Flat,
-				Margin = new Padding(6)
-			};
-
-			openMapBtn.Click += OnOpenMap;
-			_areaView.DoubleClick += OnOpenMap;
-
-			root.Controls.Add(openMapBtn, 0, 1);
-
-			Controls.Add(root);
-		}
-
-		private void OnOpenMap(object? sender, EventArgs e)
-		{
-			if (_areaView!.SelectedItems.Count == 0)
-			{
-				MessageBox.Show("Area selection required.");
-				return;
-			}
-
-			AreaDocument = AreaSerializer.LoadBinary((string) _areaView.SelectedItems[0].Tag!);
-
-			DialogResult = DialogResult.OK;
-			Close();
-		}
-
-		private Control Wrap(string title, Control content)
-		{
-			var panel = new Panel { Dock = DockStyle.Fill };
-
-			panel.Controls.Add(content);
-			panel.Controls.Add(new Label
-			{
-				Text = title,
-				Dock = DockStyle.Top,
+				Text = "Area",
 				Height = 28,
-				Padding = new Padding(6, 6, 6, 0),
-				BackColor = Color.FromArgb(20, 20, 20),
-				ForeColor = Color.White,
-				Font = new Font("Segoe UI Semibold", 9f)
-			});
+				Padding = new Thickness(6, 6, 6, 0),
+				Background = MapperTheme.HeaderBackground,
+				Foreground = Brushes.White,
+				FontWeight = FontWeight.SemiBold
+			};
+			DockPanel.SetDock(header, Dock.Top);
+			listContainer.Children.Add(header);
 
-			return panel;
+			_areaView = new ListBox
+			{
+				Background = Brushes.Transparent,
+				Margin = new Thickness(0)
+			};
+			_areaView.DoubleTapped += (s, e) => OpenSelected();
+			listContainer.Children.Add(_areaView);
+
+			content.Children.Add(listContainer);
+
+			// Button
+			var openBtn = new Button
+			{
+				Content = "Open Map",
+				Width = 90,
+				Height = 35,
+				Margin = new Thickness(6),
+				HorizontalAlignment = HorizontalAlignment.Right,
+				Background = MapperTheme.ButtonHighlight,
+				Foreground = Brushes.White
+			};
+			openBtn.Click += (s, e) => OpenSelected();
+
+			Grid.SetRow(openBtn, 1);
+			content.Children.Add(openBtn);
+
+			Content = content;
 		}
 
 		private void LoadAreas()
 		{
-			Populate(_areaView!, EditorPaths.Maps);
-		}
+			if (!Directory.Exists(EditorPaths.Maps))
+				Directory.CreateDirectory(EditorPaths.Maps);
 
-		private void Populate(ListView lv, string path)
-		{
-			lv.Items.Clear();
-
-			if (!Directory.Exists(path))
-				Directory.CreateDirectory(path);
-
-			foreach (var file in Directory.EnumerateFiles(path, "*.gbm"))
+			foreach (var file in Directory.EnumerateFiles(EditorPaths.Maps, "*.gbm"))
 			{
-				lv.Items.Add(new ListViewItem(Path.GetFileNameWithoutExtension(file))
+				_areaView!.Items.Add(new ListBoxItem
 				{
+					Content = Path.GetFileNameWithoutExtension(file),
 					Tag = file
 				});
+			}
+		}
+
+		private void OpenSelected()
+		{
+			if (_areaView!.SelectedItem is ListBoxItem selected)
+			{
+				// Using your struct-based or direct-result passing approach
+				var doc = AreaSerializer.LoadBinary((string)selected.Tag!);
+				Close(new OpenMapResult(doc));
 			}
 		}
 	}

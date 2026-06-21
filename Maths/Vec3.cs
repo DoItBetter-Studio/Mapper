@@ -4,6 +4,8 @@ namespace Glyphborn.Mapper.Maths
 {
 	public struct Vec3
 	{
+		public static readonly Vec3 Zero = new Vec3();
+
 		public float x;
 		public float y;
 		public float z;

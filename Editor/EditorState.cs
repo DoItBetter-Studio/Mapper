@@ -1,6 +1,4 @@
-﻿using Glyphborn.Mapper.Controls;
-using System.Collections.Generic;
-using System.Drawing;
+﻿using Glyphborn.Mapper.Tiles;
 
 namespace Glyphborn.Mapper.Editor
 {
@@ -21,5 +19,19 @@ namespace Glyphborn.Mapper.Editor
 		public int ActiveMapY;
 
 		public uint CurrentRoomID { get; set; } = 1;
+	}
+
+	public readonly struct TileSelection
+	{
+		public readonly byte TilesetIndex;
+		public readonly ushort TileIndex;
+		public readonly TileDefinition Tile;
+
+		public TileSelection(byte tilesetIndex, ushort tileIndex, TileDefinition tile)
+		{
+			TilesetIndex = tilesetIndex;
+			TileIndex = tileIndex;
+			Tile = tile;
+		}
 	}
 }

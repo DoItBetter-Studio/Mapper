@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Drawing;
-
+using Avalonia.Media.Imaging;
 using Glyphborn.Mapper.Editor.Undo;
 
 namespace Glyphborn.Mapper.Editor
@@ -14,7 +13,7 @@ namespace Glyphborn.Mapper.Editor
 
 		public TileRef[][][] Tiles;
 
-		public Bitmap? MiniPreview;
+		public WriteableBitmap? MiniPreview;
 
 		public event Action? Update;
 

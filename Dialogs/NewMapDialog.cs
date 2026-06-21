@@ -1,188 +1,153 @@
-﻿using System;
-using System.Drawing;
-using System.IO;
-using System.Windows.Forms;
-
-using Glyphborn.Mapper.Dialogs;
+﻿using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Damascus.Mapper.Theme;
 using Glyphborn.Mapper.Editor;
 using Glyphborn.Mapper.Tiles;
+using MsBox.Avalonia;
+using System;
+using System.IO;
+using System.Linq;
 
-namespace Glyphborn.Mapper
+namespace Damascus.Mapper.Dialogs
 {
-	public partial class NewMapDialog : Form
-	{
-		public Tileset? Regional { get; private set; }
-		public Tileset? Local { get; private set; }
-		public Tileset? Interior { get; private set; }
-		public string? MapName { get; private set; }
+	public sealed record NewMapResult(Tileset Regional, Tileset Local, Tileset? Interior, string MapName);
 
-		private ListView? _regionalList;
-		private ListView? _localList;
-		private ListView? _interiorList;
+	public sealed record TilesetEntry(string Name, string Path)
+	{
+		public override string ToString() => Name;
+	}
+
+	public class NewMapDialog : Window
+	{
+		private ListBox? _regionalList;
+		private ListBox? _localList;
+		private ListBox? _interiorList;
 		private CheckBox? _enableInterior;
 		private TextBox? _mapNameTextBox;
 
 		public NewMapDialog()
 		{
-			Text = "New Map";
+			Title = "New Map";
 			Width = 700;
 			Height = 500;
-			FormBorderStyle = FormBorderStyle.FixedDialog;
-			StartPosition = FormStartPosition.CenterParent;
-			MaximizeBox = false;
-			MinimizeBox = false;
-			BackColor = Color.FromArgb(45, 45, 48);
-			ForeColor = Color.White;
+			WindowStartupLocation = WindowStartupLocation.CenterOwner;
+			Background = MapperTheme.WindowBackground;
+			Foreground = Brushes.White;
+			CanResize = false;
+			Icon = MapperTheme.Icon;
 
 			BuildUI();
 			LoadTilesets();
 		}
 
-		private ListView CreateTilesetList()
-		{
-			var lv = new ListView
-			{
-				View = View.Details,
-				FullRowSelect = true,
-				MultiSelect = false,
-				Dock = DockStyle.Fill,
-				HeaderStyle = ColumnHeaderStyle.None,
-				BackColor = Color.FromArgb(30, 30, 30),
-				ForeColor = Color.White,
-				BorderStyle = BorderStyle.None
-			};
-
-			lv.Columns.Add("Tilesets", -2);
-			return lv;
-		}
-
 		private void BuildUI()
 		{
-			var root = new TableLayoutPanel
+			var mainGrid = new Grid
 			{
-				Dock = DockStyle.Fill,
-				ColumnCount = 3,
-				RowCount = 3
+				RowDefinitions = new RowDefinitions("Auto, *, Auto"),
+				ColumnDefinitions = new ColumnDefinitions("*, *, *"),
+				Margin = new Thickness(10)
 			};
 
-			root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-			root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-			root.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
+			var headerStack = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) };
+			headerStack.Children.Add(new TextBlock { Text = "Name:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) });
+			_mapNameTextBox = new TextBox { Width = 200 };
+			headerStack.Children.Add(_mapNameTextBox);
 
-			root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33));
-			root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33));
-			root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
-
-			var mapNameContainer = new FlowLayoutPanel
-			{
-				Dock = DockStyle.Fill,
-				FlowDirection = FlowDirection.LeftToRight,
-				Height = 30,
-			};
-
-			var mapLabel = new Label
-			{
-				Text = "Name:",
-				ForeColor = Color.White,
-				Margin = new Padding(10),
-				Width = 50
-			};
-
-			_mapNameTextBox = new TextBox
-			{
-				Width = 200
-			};
-
-			mapNameContainer.Controls.Add(mapLabel);
-			mapNameContainer.Controls.Add(_mapNameTextBox);
-
-
-
-			root.Controls.Add(mapNameContainer, 0, 0);
-			root.SetColumnSpan(mapNameContainer, 3);
+			Grid.SetRow(headerStack, 0);
+			Grid.SetColumnSpan(headerStack, 3);
+			mainGrid.Children.Add(headerStack);
 
 			_regionalList = CreateTilesetList();
 			_localList = CreateTilesetList();
 			_interiorList = CreateTilesetList();
 
-			root.Controls.Add(Wrap("Regional", _regionalList), 0, 1);
-			root.Controls.Add(Wrap("Local", _localList), 1, 1);
-			root.Controls.Add(Wrap("Interior", _interiorList), 2, 1);
+			_interiorList.IsEnabled = false;
 
-			_enableInterior = new CheckBox
+			mainGrid.Children.Add(Wrap("Regional", _regionalList, 0, 1));
+			mainGrid.Children.Add(Wrap("Local", _localList, 1, 1));
+			mainGrid.Children.Add(Wrap("Interior", _interiorList, 2, 1));
+
+			var footerGrid = new Grid
 			{
-				Text = "Enable Interior Tileset",
-				Dock = DockStyle.Fill,
-				BackColor = Color.FromArgb(45, 45, 48),
-				ForeColor = Color.White
+				Margin = new Thickness(10, 0, 10, 10),
+				ColumnDefinitions = new ColumnDefinitions("Auto, *, Auto") // Left, Spacer, Right
 			};
 
-			_enableInterior.CheckedChanged += (_, __) =>
+			_enableInterior = new CheckBox { Content = "Enable Interior Tileset", VerticalAlignment = VerticalAlignment.Center };
+
+			_enableInterior.IsCheckedChanged += (s, _) =>
 			{
-				_interiorList.Enabled = _enableInterior.Checked;
-				_interiorList.BackColor = _enableInterior.Checked
-					? Color.FromArgb(30, 30, 30)
-					: Color.FromArgb(20, 20, 20);
+				if (s is CheckBox checkbox)
+				{
+					_interiorList.IsEnabled = checkbox.IsChecked ?? false;
+				}
 			};
 
-			var createTilesetBtn = new Button
-			{
-				Width = 90,
-				Text = "Create Tileset",
-				Dock = DockStyle.Right,
-				BackColor = Color.FromArgb(45, 45, 45),
-				ForeColor = Color.White,
-				FlatStyle = FlatStyle.Flat,
-				Margin = new Padding(6)
-			};
-
-			createTilesetBtn.FlatAppearance.BorderColor = Color.FromArgb(70, 70, 70);
-			createTilesetBtn.FlatAppearance.BorderSize = 1;
+			var buttonStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+			var createTilesetBtn = new Button { Content = "Create Tileset", Padding = new Thickness(10, 5) };
 			createTilesetBtn.Click += OnCreateTileset;
 
-			var createBtn = new Button
-			{
-				Width = 90,
-				Text = "Create Map",
-				Dock = DockStyle.Right,
-				BackColor = Color.FromArgb(45, 45, 45),
-				ForeColor = Color.White,
-				FlatStyle = FlatStyle.Flat,
-				Margin = new Padding(6)
-			};
+			var createMapBtn = new Button { Content = "Create Map", Padding = new Thickness(10, 5) };
+			createMapBtn.Click += OnCreateMap;
 
-			createBtn.FlatAppearance.BorderColor = Color.FromArgb(70, 70, 70);
-			createBtn.FlatAppearance.BorderSize = 1;
-			createBtn.Click += OnCreateMap;
+			buttonStack.Children.Add(createTilesetBtn);
+			buttonStack.Children.Add(createMapBtn);
 
-			var bottom = new Panel { Dock = DockStyle.Fill };
-			bottom.Controls.Add(_enableInterior);
-			bottom.Controls.Add(createTilesetBtn);
-			bottom.Controls.Add(createBtn);
+			footerGrid.Children.Add(_enableInterior);
+			Grid.SetColumn(buttonStack, 2);
+			footerGrid.Children.Add(buttonStack);
 
-			root.Controls.Add(bottom, 0, 2);
-			root.SetColumnSpan(bottom, 3);
+			Grid.SetRow(footerGrid, 2);
+			Grid.SetColumnSpan(footerGrid, 3);
+			mainGrid.Children.Add(footerGrid);
 
-			Controls.Add(root);
+			Content = mainGrid;
 		}
 
-		private Control Wrap(string title, Control content)
-		{
-			var panel = new Panel { Dock= DockStyle.Fill };
+		private ListBox CreateTilesetList()
+        {
+            return new ListBox
+            {
+                Background = SolidColorBrush.Parse("#1E1E1E"),
+                BorderThickness = new Thickness(0),
+                Margin = new Thickness(5)
+            };
+        }
 
-			panel.Controls.Add(content);
-			panel.Controls.Add(new Label
+        private Control Wrap(string title, Control content, int col, int row)
+        {
+			var border = new Border
 			{
-				Text = title,
-				Dock = DockStyle.Top,
-				Height = 28,
-				Padding = new Padding(6, 6, 6, 0),
-				BackColor = Color.FromArgb(20, 20, 20),
-				ForeColor = Color.White,
-				Font = new Font("Segoe UI Semibold", 9f)
-			});
+				BorderBrush = MapperTheme.BorderBrush, // Subtle divider color
+				BorderThickness = new Thickness(1),
+				Margin = new Thickness(5),
+				Child = new StackPanel
+				{
+					Background = MapperTheme.ContainerBackground,
+					Children =
+					{
+						// The Header with a distinct background
+						new TextBlock
+						{
+							Text = title,
+							Background = MapperTheme.HeaderBackground,
+							Foreground = Brushes.White,
+							Padding = new Thickness(10, 5),
+							FontWeight = FontWeight.Bold
+						},
+						// The ListBox
+						content
+					}
+				}
+			};
 
-			return panel;
+			Grid.SetColumn(border, col);
+			Grid.SetRow(border, row);
+			return border;
 		}
 
 		private void LoadTilesets()
@@ -192,71 +157,83 @@ namespace Glyphborn.Mapper
 			Populate(_interiorList!, EditorPaths.Interior);
 		}
 
-		private void Populate(ListView lv, string path)
+		private void Populate(ListBox listBox, string path)
 		{
-			lv.Items.Clear();
+			listBox.Items.Clear();
+
+			// DUMP THE PATH TO SEE WHERE IT'S LOOKING
+			string absolutePath = Path.GetFullPath(path);
+			System.Diagnostics.Debug.WriteLine($"Looking for tilesets in: {absolutePath}");
 
 			if (!Directory.Exists(path))
-				Directory.CreateDirectory(path);
-
-			foreach (var file in Directory.EnumerateFiles(path, "*.gbts"))
 			{
-				lv.Items.Add(new ListViewItem(Path.GetFileNameWithoutExtension(file))
-				{
-					Tag = file
-				});
+				Console.WriteLine("Directory does not exist!");
+				return;
+			}
+
+			var files = Directory.EnumerateFiles(path, "*.gbts").ToList();
+			System.Diagnostics.Debug.WriteLine($"Found {files.Count} files.");
+
+			foreach (var file in files)
+			{
+				listBox.Items.Add(new TilesetEntry(Path.GetFileNameWithoutExtension(file), file));
 			}
 		}
 
-		private void OnCreateMap(object? sender, EventArgs e)
+		private async void OnCreateMap(object? sender, RoutedEventArgs e)
 		{
-			if (_regionalList!.SelectedItems.Count == 0 ||
-				_localList!.SelectedItems.Count == 0)
+			var regional = (TilesetEntry)_regionalList!.SelectedItem!;
+			var local = (TilesetEntry)_localList!.SelectedItem!;
+			var interior = (TilesetEntry)_interiorList!.SelectedItem!;
+
+			if (regional == null || local == null)
 			{
-				MessageBox.Show("Regional and Local tilesets are required.");
+				await MessageBoxManager.GetMessageBoxStandard("Error", "Regional and Local tilesets are required.").ShowAsync();
 				return;
 			}
 
 			if (string.IsNullOrEmpty(_mapNameTextBox!.Text))
 			{
-				MessageBox.Show("Map Name is required.");
+				await MessageBoxManager.GetMessageBoxStandard("Error", "Map name is required.").ShowAsync();
 				return;
 			}
 
-			Regional = TilesetSerializer.LoadBinary((string) _regionalList.SelectedItems[0].Tag!);
-			Local = TilesetSerializer.LoadBinary((string) _localList.SelectedItems[0].Tag!);
+			System.Diagnostics.Debug.WriteLine($"Regional Tileset Selected: {regional}");
 
-			if (_enableInterior!.Checked && _interiorList!.SelectedItems.Count != 0)
+			var regionalTileset = TilesetSerializer.LoadBinary(regional.Path);
+			var localTileset = TilesetSerializer.LoadBinary(local.Path);
+			Tileset? interiorTileset = null;
+
+			if (_enableInterior!.IsChecked == true && interior != null)
 			{
-				Interior = TilesetSerializer.LoadBinary((string)_interiorList.SelectedItems[0].Tag!);
+				interiorTileset = TilesetSerializer.LoadBinary(interior.Path);
 			}
 
-			MapName = _mapNameTextBox.Text.Trim();
+			var mapName = _mapNameTextBox.Text.Trim();
 
-			DialogResult = DialogResult.OK;
-			Close();
+			NewMapResult result = new NewMapResult(regionalTileset, localTileset, interiorTileset, mapName);
+
+			Close(result);
 		}
 
-		private void OnCreateTileset(object? sender, EventArgs e)
+		private async void OnCreateTileset(object? sender, RoutedEventArgs e)
 		{
 			var dlg = new CreateTilesetDialog();
+			var result = await dlg.ShowDialog<CreateTilesetResult?>(this);
 
-			if (dlg.ShowDialog(this) != DialogResult.OK)
-				return;
+			if (result == null) return;
 
-			string basePath = dlg.TilesetType == TilesetType.Regional ? EditorPaths.Regional :
-							  dlg.TilesetType == TilesetType.Local ? EditorPaths.Local :
-																	EditorPaths.Interior;
+			string basePath = result.TilesetType == TilesetType.Regional ? EditorPaths.Regional :
+							  result.TilesetType == TilesetType.Local ? EditorPaths.Local : EditorPaths.Interior;
 
-			string path = Path.Combine(basePath, $"{dlg.TilesetName}.gbts");
+			string path = Path.Combine(basePath, $"{result.TilesetName}.gbts");
 
 			var tileset = new Tileset
 			{
-				Name = dlg.TilesetName!,
-				Type = dlg.TilesetType
+				Name = result.TilesetName,
+				Type = result.TilesetType
 			};
 
-			// Always add Air tile first
 			tileset.Tiles.Add(new TileDefinition
 			{
 				Id = 0,

@@ -1,32 +1,35 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Drawing;
-using System.IO;
-using System.Windows.Forms;
-
-using Glyphborn.Mapper.Controls;
+﻿using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Damascus.Mapper.Controls;
+using Damascus.Mapper.Theme;
 using Glyphborn.Mapper.Editor;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 
 namespace Glyphborn.Mapper
 {
-	public partial class ImportGhostDialog : Form
-	{
-		public List<(int x, int y, MapDocument map)> SelectedGhostMaps { get; private set; }
+	public sealed record ImportGhostResult(List<(int x, int y, MapDocument map)> SelectedGhostMaps);
 
-		private ListView _areaView;
-		private GhostAreaSelectControl _ghostAreaControl;
+	public class ImportGhostDialog : Window
+	{
+		private List<(int x, int y, MapDocument map)> _selectedGhostMaps { get; set; } = new();
+
+		private ListBox _areaView = null!;
+		private GhostAreaSelectControl _ghostAreaControl = null!;
 
 		public ImportGhostDialog()
 		{
-			Text = "Import Ghost Maps";
-			Width = 600;  // Wider to fit both panels
+			Title = "Import Ghost Maps";
+			Width = 600;
 			Height = 500;
-			FormBorderStyle = FormBorderStyle.FixedDialog;
-			StartPosition = FormStartPosition.CenterParent;
-			MaximizeBox = false;
-			MinimizeBox = false;
-			BackColor = Color.FromArgb(45, 45, 48);
-			ForeColor = Color.White;
+			CanResize = false;
+			WindowStartupLocation = WindowStartupLocation.CenterOwner;
+			Background = new SolidColorBrush(Color.FromRgb(45, 45, 48));
+			Icon = MapperTheme.Icon;
 
 			BuildUI();
 			LoadAreas();
@@ -34,167 +37,161 @@ namespace Glyphborn.Mapper
 
 		private void BuildUI()
 		{
-			var root = new TableLayoutPanel
-			{
-				Dock = DockStyle.Fill,
-				ColumnCount = 2,
-				RowCount = 2
-			};
-
-			// Left column: area list (smaller)
-			root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 200));
-			// Right column: area preview (fills remaining)
-			root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-
-			// Top row: content (fills)
-			root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-			// Bottom row: button (fixed)
-			root.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
+			var root = new Grid();
+			root.ColumnDefinitions.Add(new ColumnDefinition(200, GridUnitType.Pixel));
+			root.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
+			root.RowDefinitions.Add(new RowDefinition(1, GridUnitType.Star));
+			root.RowDefinitions.Add(new RowDefinition(50, GridUnitType.Pixel));
 
 			// Left panel: Area list
-			_areaView = CreateAreaList();
-			_areaView.SelectedIndexChanged += OnAreaSelected;
-			root.Controls.Add(Wrap("Areas", _areaView), 0, 0);
+			_areaView = new ListBox
+			{
+				Background = new SolidColorBrush(Color.FromRgb(30, 30, 30)),
+				Foreground = Brushes.White,
+				BorderThickness = new Thickness(0)
+			};
+			_areaView.SelectionChanged += OnAreaSelected;
+
+			var areaWrap = Wrap("Areas", _areaView);
+			Grid.SetColumn(areaWrap, 0);
+			Grid.SetRow(areaWrap, 0);
+			root.Children.Add(areaWrap);
 
 			// Right panel: Ghost area selector
-			var ghostPanel = new Panel
+			_ghostAreaControl = new GhostAreaSelectControl();
+
+			var ghostScroll = new ScrollViewer
 			{
-				Dock = DockStyle.Fill,
-				AutoScroll = true,
-				BackColor = Color.FromArgb(30, 30, 30)
+				Content = _ghostAreaControl,
+				Background = new SolidColorBrush(Color.FromRgb(30, 30, 30))
 			};
 
-			_ghostAreaControl = new GhostAreaSelectControl
-			{
-				BackColor = Color.FromArgb(30, 30, 30),
-				Location = new Point(0, 0)
-			};
-
-			ghostPanel.Controls.Add(_ghostAreaControl);
-			root.Controls.Add(Wrap("Select Maps", ghostPanel), 1, 0);
+			var ghostWrap = Wrap("Select Maps", ghostScroll);
+			Grid.SetColumn(ghostWrap, 1);
+			Grid.SetRow(ghostWrap, 0);
+			root.Children.Add(ghostWrap);
 
 			// Button panel (spans both columns)
-			var buttonPanel = new FlowLayoutPanel
+			var buttonPanel = new StackPanel
 			{
-				Dock = DockStyle.Fill,
-				FlowDirection = FlowDirection.RightToLeft
+				Orientation = Orientation.Horizontal,
+				HorizontalAlignment = HorizontalAlignment.Right,
+				VerticalAlignment = VerticalAlignment.Center,
+				Margin = new Thickness(6)
 			};
-
-			var importBtn = new Button
-			{
-				Width = 90,
-				Text = "Import",
-				BackColor = Color.FromArgb(45, 45, 45),
-				ForeColor = Color.White,
-				FlatStyle = FlatStyle.Flat,
-				Margin = new Padding(6)
-			};
-			importBtn.FlatAppearance.BorderColor = Color.FromArgb(70, 70, 70);
-			importBtn.FlatAppearance.BorderSize = 1;
-			importBtn.Click += OnImport;
 
 			var cancelBtn = new Button
 			{
+				Content = "Cancel",
 				Width = 90,
-				Text = "Cancel",
-				DialogResult = DialogResult.Cancel,
-				BackColor = Color.FromArgb(45, 45, 45),
-				ForeColor = Color.White,
-				FlatStyle = FlatStyle.Flat,
-				Margin = new Padding(6)
+				Background = new SolidColorBrush(Color.FromRgb(45, 45, 45)),
+				Foreground = Brushes.White,
+				Margin = new Thickness(6)
 			};
-			cancelBtn.FlatAppearance.BorderColor = Color.FromArgb(70, 70, 70);
-			cancelBtn.FlatAppearance.BorderSize = 1;
+			cancelBtn.Click += (_, _) => Close(false);
 
-			buttonPanel.Controls.Add(importBtn);
-			buttonPanel.Controls.Add(cancelBtn);
+			var importBtn = new Button
+			{
+				Content = "Import",
+				Width = 90,
+				Background = new SolidColorBrush(Color.FromRgb(45, 45, 45)),
+				Foreground = Brushes.White,
+				Margin = new Thickness(6)
+			};
+			importBtn.Click += OnImport;
 
-			root.Controls.Add(buttonPanel, 0, 1);
-			root.SetColumnSpan(buttonPanel, 2);  // Span both columns
+			buttonPanel.Children.Add(cancelBtn);
+			buttonPanel.Children.Add(importBtn);
 
-			Controls.Add(root);
+			Grid.SetColumn(buttonPanel, 0);
+			Grid.SetRow(buttonPanel, 1);
+			Grid.SetColumnSpan(buttonPanel, 2);
+			root.Children.Add(buttonPanel);
+
+			Content = root;
 		}
 
-		private void OnAreaSelected(object? sender, EventArgs e)
+		private void OnAreaSelected(object? sender, SelectionChangedEventArgs e)
 		{
-			if (_areaView.SelectedItems.Count == 0)
+			if (_areaView.SelectedItem is not AreaItem item)
 				return;
 
-			string path = (string) _areaView.SelectedItems[0].Tag!;
-			var area = AreaSerializer.LoadBinary(path);
+			var area = AreaSerializer.LoadBinary(item.Path);
 			_ghostAreaControl.SetArea(area);
 		}
 
-		private void OnImport(object? sender, EventArgs e)
+		private async void OnImport(object? sender, RoutedEventArgs e)
 		{
-			SelectedGhostMaps = _ghostAreaControl.GetSelectedCells();
+			_selectedGhostMaps = _ghostAreaControl.GetSelectedCells();
 
-			if (SelectedGhostMaps.Count == 0)
+			if (_selectedGhostMaps.Count == 0)
 			{
-				MessageBox.Show("Please select at least one map to import as ghost.");
+				var dialog = new Window
+				{
+					Title = "Import",
+					Width = 320,
+					Height = 130,
+					CanResize = false,
+					WindowStartupLocation = WindowStartupLocation.CenterOwner,
+					Background = new SolidColorBrush(Color.FromRgb(45, 45, 48)),
+					Content = new TextBlock
+					{
+						Text = "Please select at least one map to import as ghost.",
+						Foreground = Brushes.White,
+						TextWrapping = TextWrapping.Wrap,
+						Margin = new Thickness(16),
+						VerticalAlignment = VerticalAlignment.Center
+					}
+				};
+				await dialog.ShowDialog(this);
 				return;
 			}
 
-			DialogResult = DialogResult.OK;
-			Close();
+			Close(_selectedGhostMaps);
 		}
 
-		private ListView CreateAreaList()
+		private static Control Wrap(string title, Control content)
 		{
-			var lv = new ListView
-			{
-				View = View.Details,
-				FullRowSelect = true,
-				MultiSelect = false,
-				Dock = DockStyle.Fill,
-				HeaderStyle = ColumnHeaderStyle.None,
-				BackColor = Color.FromArgb(30, 30, 30),
-				ForeColor = Color.White,
-				BorderStyle = BorderStyle.None
-			};
+			var panel = new DockPanel { LastChildFill = true };
 
-			lv.Columns.Add("Areas", -2);
-			return lv;
-		}
-
-		private Control Wrap(string title, Control content)
-		{
-			var panel = new Panel { Dock = DockStyle.Fill };
-
-			panel.Controls.Add(content);
-			panel.Controls.Add(new Label
+			var label = new TextBlock
 			{
 				Text = title,
-				Dock = DockStyle.Top,
-				Height = 28,
-				Padding = new Padding(6, 6, 6, 0),
-				BackColor = Color.FromArgb(20, 20, 20),
-				ForeColor = Color.White,
-				Font = new Font("Segoe UI Semibold", 9f)
-			});
+				Background = new SolidColorBrush(Color.FromRgb(20, 20, 20)),
+				Foreground = Brushes.White,
+				FontWeight = FontWeight.SemiBold,
+				FontFamily = new FontFamily("Segoe UI"),
+				FontSize = 12,
+				Padding = new Thickness(6),
+				Height = 28
+			};
+
+			DockPanel.SetDock(label, Dock.Top);
+			panel.Children.Add(label);
+			panel.Children.Add(content);
 
 			return panel;
 		}
 
 		private void LoadAreas()
 		{
-			Populate(_areaView!, EditorPaths.Maps);
+			Populate(_areaView, EditorPaths.Maps);
 		}
 
-		private void Populate(ListView lv, string path)
+		private static void Populate(ListBox lv, string path)
 		{
-			lv.Items.Clear();
-
 			if (!Directory.Exists(path))
 				Directory.CreateDirectory(path);
 
-			foreach (var file in Directory.EnumerateFiles(path, "*.gbm"))
-			{
-				lv.Items.Add(new ListViewItem(Path.GetFileNameWithoutExtension(file))
-				{
-					Tag = file
-				});
-			}
+			lv.ItemsSource = Directory
+				.EnumerateFiles(path, "*.gbm")
+				.Select(f => new AreaItem(Path.GetFileNameWithoutExtension(f), f))
+				.ToList();
+		}
+
+		private record AreaItem(string Name, string Path)
+		{
+			public override string ToString() => Name;
 		}
 	}
 }

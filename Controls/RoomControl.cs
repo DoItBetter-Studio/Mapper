@@ -1,12 +1,16 @@
-﻿using Glyphborn.Mapper.Tiles;
+﻿using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Media;
+using Damascus.Mapper.Theme;
+using Glyphborn.Mapper.Tiles;
 using System;
 using System.Collections.Generic;
-using System.Drawing;
-using System.Windows.Forms;
+using System.Globalization;
 
-namespace Glyphborn.Mapper.Controls
+namespace Damascus.Mapper.Controls
 {
-	public sealed class RoomControl : Control
+	sealed class RoomControl : Control
 	{
 		private List<RoomDefinition> _rooms = new();
 		private int _selectedIndex = -1;
@@ -17,17 +21,16 @@ namespace Glyphborn.Mapper.Controls
 
 		public event Action<RoomDefinition?>? RoomSelected;
 
+		private static readonly IBrush ActiveRoom = new SolidColorBrush(Color.FromRgb(50, 100, 200));
+		private static readonly IBrush OddRooms = new SolidColorBrush(Color.FromRgb(35, 35, 35));
+		private static readonly IBrush EvenRooms = new SolidColorBrush(Color.FromRgb(28, 28, 28));
+
 		public RoomDefinition? SelectedRoom =>
 			_selectedIndex >= 0 && _selectedIndex < _rooms.Count
 				? _rooms[_selectedIndex]
 				: null;
 
-		public RoomControl()
-		{
-			DoubleBuffered = true;
-			BackColor = Color.FromArgb(30, 30, 30);
-			ForeColor = Color.White;
-		}
+		public RoomControl() { }
 
 		public void Refresh(List<RoomDefinition> rooms)
 		{
@@ -49,7 +52,7 @@ namespace Glyphborn.Mapper.Controls
 			}
 
 			UpdateHeight();
-			Invalidate();
+			InvalidateVisual();
 		}
 
 		public void SelectById(uint id)
@@ -59,7 +62,7 @@ namespace Glyphborn.Mapper.Controls
 				if (_rooms[i].Id == id)
 				{
 					_selectedIndex = i;
-					Invalidate();
+					InvalidateVisual();
 					RoomSelected?.Invoke(_rooms[i]);
 					return;
 				}
@@ -71,83 +74,68 @@ namespace Glyphborn.Mapper.Controls
 			Height = Math.Max(ROW_HEIGHT, _rooms.Count * ROW_HEIGHT);
 		}
 
-		protected override void OnMouseDown(MouseEventArgs e)
+		protected override void OnPointerPressed(PointerPressedEventArgs e)
 		{
-			base.OnMouseDown(e);
+			base.OnPointerPressed(e);
 
-			int index = e.Y / ROW_HEIGHT;
+			var point = e.GetCurrentPoint(this);
+
+			int index = (int)point.Position.Y / ROW_HEIGHT;
 			if (index < 0 || index >= _rooms.Count)
 				return;
 
 			_selectedIndex = index;
-			Invalidate();
+			InvalidateVisual();
 			RoomSelected?.Invoke(_rooms[index]);
 		}
 
-		protected override void OnPaint(PaintEventArgs e)
+		public override void Render(DrawingContext context)
 		{
-			base.OnPaint(e);
-
-			var g = e.Graphics;
-			g.Clear(BackColor);
+			base.Render(context);
 
 			for (int i = 0; i < _rooms.Count; i++)
 			{
-				DrawRow(g, i);
+				DrawRow(context, i);
 			}
 		}
 
-		private void DrawRow(Graphics g, int i)
+		private void DrawRow(DrawingContext context, int i)
 		{
 			var room = _rooms[i];
-			var rowRect = new Rectangle(0, i * ROW_HEIGHT, Width, ROW_HEIGHT);
+			var rowRect = new Rect(0, i * ROW_HEIGHT, Bounds.Width, ROW_HEIGHT);
 
-			// Row background
-			Color bgColor = i == _selectedIndex
-				? Color.FromArgb(50, 100, 200)
+			IBrush bgColor = i == _selectedIndex
+				? ActiveRoom
 				: i % 2 == 0
-					? Color.FromArgb(35, 35, 35)
-					: Color.FromArgb(28, 28, 28);
+					? EvenRooms
+					: OddRooms;
 
-			using (var bg = new SolidBrush(bgColor))
-				g.FillRectangle(bg, rowRect);
+			context.FillRectangle(bgColor, rowRect);
 
-			// Color swatch
-			var swatchRect = new Rectangle(
+			var swatchRect = new Rect(
 				SWATCH_MARGIN,
 				i * ROW_HEIGHT + (ROW_HEIGHT - SWATCH_SIZE) / 2,
 				SWATCH_SIZE,
 				SWATCH_SIZE);
 
-			using (var swatchBrush = new SolidBrush(room.Color))
-				g.FillRectangle(swatchBrush, swatchRect);
+			context.FillRectangle(new SolidColorBrush(room.Color), swatchRect);
 
-			g.DrawRectangle(Pens.DimGray, swatchRect);
+			context.DrawRectangle(new Pen(Brushes.Black, 1), swatchRect);
 
-			// Room name
-			int textX = swatchRect.Right + SWATCH_MARGIN;
+			int textX = (int)swatchRect.Right + SWATCH_MARGIN;
 			int textY = i * ROW_HEIGHT + (ROW_HEIGHT / 2) - 7;
 
-			using var nameFont = new Font("Segoe UI", 9f, FontStyle.Regular);
-			g.DrawString(room.Name, nameFont, Brushes.White, textX, textY);
+			var nameLabel = new FormattedText(room.Name, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, Typeface.Default, 12, MapperTheme.TextPrimary);
+			context.DrawText(nameLabel, new Point(textX, textY));
 
-			// Room ID — right-aligned, muted
-			using var idFont = new Font("Segoe UI", 8f, FontStyle.Regular);
-			using var idBrush = new SolidBrush(Color.FromArgb(140, 140, 140));
+			var idLabel = new FormattedText($"#{room.Id}", CultureInfo.CurrentCulture, FlowDirection.LeftToRight, Typeface.Default, 12, MapperTheme.TextPrimary);
 
-			string idStr = $"#{room.Id}";
-			var idSize = g.MeasureString(idStr, idFont);
+			int idX = (int)Bounds.Width - (int)idLabel.Width - SWATCH_MARGIN;
+			int idY = i * ROW_HEIGHT + (ROW_HEIGHT / 2) - 7;
 
-			g.DrawString(
-				idStr,
-				idFont,
-				idBrush,
-				Width - idSize.Width - SWATCH_MARGIN,
-				i * ROW_HEIGHT + (ROW_HEIGHT - (int)idSize.Height) / 2);
+			context.DrawText(idLabel, new Point(idX, idY));
 
-			// Row separator
-			using var sep = new Pen(Color.FromArgb(45, 45, 45));
-			g.DrawLine(sep, 0, rowRect.Bottom - 1, Width, rowRect.Bottom - 1);
+			context.DrawLine(new Pen(Brushes.White, 1), new Point(0, rowRect.Bottom - 1), new Point(Bounds.Width, rowRect.Bottom - 1));
 		}
 	}
 }

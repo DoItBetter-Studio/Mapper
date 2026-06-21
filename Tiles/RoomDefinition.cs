@@ -1,5 +1,5 @@
-﻿using System;
-using System.Drawing;
+﻿using Avalonia.Media;
+using System;
 
 namespace Glyphborn.Mapper.Tiles
 {
@@ -13,7 +13,7 @@ namespace Glyphborn.Mapper.Tiles
 
 		private static Color RandomColor()
 		{
-			return Color.FromArgb(_random.Next(0, 256), _random.Next(0, 256), _random.Next(0, 256));
+			return Color.FromArgb(255, (byte)_random.Next(0, 256), (byte)_random.Next(0, 256), (byte)_random.Next(0, 256));
 		}
 	}
 }

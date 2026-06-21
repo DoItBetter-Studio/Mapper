@@ -1,137 +1,83 @@
-﻿using System.Drawing;
-using System.Windows.Forms;
-
+﻿using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Damascus.Mapper.Theme;
 using Glyphborn.Mapper.Editor;
 
-namespace Glyphborn.Mapper.Dialogs
+namespace Damascus.Mapper.Dialogs
 {
-	sealed class CreateTilesetDialog : Form
-	{
-		public string? TilesetName { get; private set; }
-		public TilesetType TilesetType { get; private set; }
+	public sealed record CreateTilesetResult(string TilesetName, TilesetType TilesetType);
 
+	sealed class CreateTilesetDialog : Window
+	{
 		TextBox _nameBox;
-		RadioButton _regional, _local, _interior;
+		RadioButton _regional;
+		RadioButton _local;
+		RadioButton _interior;
 
 		public CreateTilesetDialog()
 		{
-			Text = "Create Tileset";
-			FormBorderStyle = FormBorderStyle.FixedDialog;
-			StartPosition = FormStartPosition.CenterParent;
-			MaximizeBox = false;
-			MinimizeBox = false;
-			ClientSize = new Size(300, 200);
-			BackColor = Color.FromArgb(45, 45, 48);
-			ForeColor = Color.White;
+			Title = "Create Tileset";
+			WindowStartupLocation = WindowStartupLocation.CenterOwner;
+			CanMinimize = false;
+			CanMaximize = false;
+			CanResize = false;
+			Width = 300;
+			Height = 275;
+			Background = MapperTheme.WindowBackground;
+			Foreground = Brushes.White;
+			Icon = MapperTheme.Icon;
 
-			// Root layout
-			var root = new TableLayoutPanel
+			var root = new StackPanel { Margin = new Thickness(10), Spacing = 10 };
+
+			root.Children.Add(new TextBlock { Text = "Tileset Name" });
+			_nameBox = new TextBox();
+			root.Children.Add(_nameBox);
+
+			const string groupName = "TilesetType";
+			_regional = new RadioButton { Content = "Regional", GroupName = groupName, IsChecked = true };
+			_local = new RadioButton { Content = "Local", GroupName = groupName };
+			_interior = new RadioButton { Content = "Interior", GroupName = groupName };
+
+			var groupBorder = new Border
 			{
-				Dock = DockStyle.Fill,
-				ColumnCount = 1,
-				RowCount = 4,
-				Padding = new Padding(10)
+				BorderBrush = Brushes.DimGray,
+				BorderThickness = new Thickness(1),
+				Padding = new Thickness(5),
+				CornerRadius = new CornerRadius(5)
 			};
 
-			root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-			root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-			root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-			root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+			var groupStack = new StackPanel { Spacing = 5 };
+			groupStack.Children.AddRange(new[] { _regional, _local, _interior });
+			groupBorder.Child = groupStack;
 
-			Controls.Add(root);
+			root.Children.Add(new TextBlock { Text = "Tileset Type" });
+			root.Children.Add(groupBorder);
 
-			// --- Name ---
-			var nameLabel = new Label
-			{
-				Text = "Tileset Name",
-				Dock = DockStyle.Top,
-				Height = 20
+			// 3. Buttons
+			var btnStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, HorizontalAlignment = HorizontalAlignment.Right };
+			var createBtn = new Button { Content = "Create", Width = 80 };
+			var cancelBtn = new Button { Content = "Cancel", Width = 80 };
+
+			createBtn.Click += (s, e) => {
+				var TilesetName = _nameBox.Text?.Trim();
+				TilesetType TilesetType = _regional.IsChecked == true ? TilesetType.Regional :
+							  _local.IsChecked == true ? TilesetType.Local :
+							  TilesetType.Interior;
+
+				CreateTilesetResult result = new CreateTilesetResult(TilesetName!, TilesetType);
+
+				Close(result);
 			};
 
-			_nameBox = new TextBox { Dock = DockStyle.Top };
+			cancelBtn.Click += (s, e) => Close(false);
 
-			root.Controls.Add(nameLabel);
-			root.Controls.Add(_nameBox);
+			btnStack.Children.Add(createBtn);
+			btnStack.Children.Add(cancelBtn);
+			root.Children.Add(btnStack);
 
-			// --- Type group ---
-			var typeGroup = new GroupBox
-			{
-				Text = "Tileset Type",
-				Dock = DockStyle.Top,
-				Height = 100,
-				ForeColor = Color.White
-			};
-
-			var typeLayout = new FlowLayoutPanel
-			{
-				Dock = DockStyle.Fill,
-				FlowDirection = FlowDirection.TopDown,
-				Padding = new Padding(8)
-			};
-
-			_regional = new RadioButton { Text = "Regional", Checked = true };
-			_local = new RadioButton { Text = "Local" };
-			_interior = new RadioButton { Text = "Interior" };
-
-			typeLayout.Controls.Add(_regional);
-			typeLayout.Controls.Add(_local);
-			typeLayout.Controls.Add(_interior);
-
-			typeGroup.Controls.Add(typeLayout);
-			root.Controls.Add(typeGroup);
-
-			// --- Buttons ---
-			var buttons = new FlowLayoutPanel
-			{
-				Dock = DockStyle.Fill,
-				FlowDirection = FlowDirection.RightToLeft
-			};
-
-			var create = new Button
-			{
-				Text = "Create",
-				DialogResult = DialogResult.OK,
-				Width = 80,
-				BackColor = Color.FromArgb(45, 45, 45),
-				ForeColor = Color.White,
-				FlatStyle = FlatStyle.Flat,
-				Margin = new Padding(6)
-			};
-
-			var cancel = new Button
-			{
-				Text = "Cancel",
-				DialogResult = DialogResult.Cancel,
-				Width = 80,
-				BackColor = Color.FromArgb(45, 45, 45),
-				ForeColor = Color.White,
-				FlatStyle = FlatStyle.Flat,
-				Margin = new Padding(6)
-			};
-
-			create.FlatAppearance.BorderColor = Color.FromArgb(70, 70, 70);
-			create.FlatAppearance.BorderSize = 1;
-			create.Click += (_, __) => OnCreate();
-
-			cancel.FlatAppearance.BorderColor = Color.FromArgb(70, 70, 70);
-			cancel.FlatAppearance.BorderSize = 1;
-
-			buttons.Controls.Add(create);
-			buttons.Controls.Add(cancel);
-
-			root.Controls.Add(buttons);
-
-			AcceptButton = create;
-			CancelButton = cancel;
-		}
-
-		private void OnCreate()
-		{
-			TilesetName = _nameBox.Text.Trim();
-			TilesetType =
-				_regional.Checked ? TilesetType.Regional :
-				_local.Checked ? TilesetType.Local :
-								 TilesetType.Interior;
+			this.Content = root;
 		}
 	}
 }

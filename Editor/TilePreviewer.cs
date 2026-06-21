@@ -1,19 +1,21 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Drawing;
-using System.Drawing.Drawing2D;
-
+﻿using Avalonia;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Glyphborn.Mapper.Tiles;
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
 
 namespace Glyphborn.Mapper.Editor
 {
 	public static class TilePreviewer
 	{
-		private static readonly Dictionary<int, Bitmap> _previewCache = new();
-		private static readonly Dictionary<int, Bitmap> _thumbnailCache = new();
+		private static readonly Dictionary<int, WriteableBitmap> _previewCache = new();
+		private static readonly Dictionary<int, WriteableBitmap> _thumbnailCache = new();
 		private static readonly object _lock = new();
+		private static readonly Vector _defaultDpi = new Vector(96, 96);
 
-		public static Bitmap GetPreview(Texture tex)
+		public static WriteableBitmap GetPreview(Texture tex)
 		{
 			if (tex == null) throw new ArgumentNullException(nameof(tex));
 			int key = ComputeTextureHash(tex);
@@ -39,16 +41,9 @@ namespace Glyphborn.Mapper.Editor
 				if (_thumbnailCache.TryGetValue(key, out var bmp) && bmp != null)
 					return bmp;
 
-				var source = GetPreview(tex);
-				var thumb = new Bitmap(thumbW, thumbH);
-				using (var g = Graphics.FromImage(thumb))
-				{
-					g.InterpolationMode = InterpolationMode.NearestNeighbor;
-					g.DrawImage(source, 0, 0, thumbW, thumbH);
-				}
-
-				_thumbnailCache[key] = thumb;
-				return thumb;
+				bmp = CreateThumbnail(tex, thumbW, thumbH);
+				_thumbnailCache[key] = bmp;
+				return bmp;
 			}
 		}
 
@@ -56,29 +51,71 @@ namespace Glyphborn.Mapper.Editor
 		{
 			lock (_lock)
 			{
-				foreach (var b in _previewCache.Values) b.Dispose();
-				foreach (var b in _thumbnailCache.Values) b.Dispose();
 				_previewCache.Clear();
 				_thumbnailCache.Clear();
 			}
 		}
 
-		private static Bitmap TextureToBitmap(Texture tex)
+		// Replaces the old per-pixel SetPixel loop with a row-by-row block copy.
+		// Texture packs each pixel as 0xAARRGGBB in a uint; on the little-endian
+		// hardware .NET targets, that lays out in memory as [B, G, R, A] per pixel -
+		// exactly what PixelFormat.Bgra8888 expects. So the source array can be
+		// copied straight across without touching individual channels.
+		private static unsafe WriteableBitmap TextureToBitmap(Texture tex)
 		{
-			var bmp = new Bitmap(tex.Width, tex.Height);
+			var bmp = new WriteableBitmap(
+				new PixelSize(tex.Width, tex.Height),
+				_defaultDpi,
+				PixelFormat.Bgra8888,
+				AlphaFormat.Unpremul);
 
-			for (int y = 0; y < tex.Height; y++)
+			using (var fb = bmp.Lock())
 			{
-				for (int x = 0; x < tex.Width; x++)
+				ReadOnlySpan<byte> src = MemoryMarshal.AsBytes(tex.Pixels.AsSpan());
+				int rowBytes = tex.Width * 4;
+
+				for (int y = 0; y < tex.Height; y++)
 				{
-					uint pixel = tex.Pixels[y * tex.Width + x];
+					var srcRow = src.Slice(y * rowBytes, rowBytes);
+					byte* dstPtr = (byte*)(fb.Address + y * fb.RowBytes).ToPointer();
+					srcRow.CopyTo(new Span<byte>(dstPtr, rowBytes));
+				}
+			}
 
-					byte a = (byte) ((pixel >> 24) & 0xFF);
-					byte r = (byte) ((pixel >> 16) & 0xFF);
-					byte g = (byte) ((pixel >> 8) & 0xFF);
-					byte b = (byte) (pixel & 0xFF);
+			return bmp;
+		}
 
-					bmp.SetPixel(x, y, Color.FromArgb(a, r, g, b));
+		// Nearest-neighbor downscale, sampled directly from the source texture
+		// instead of rendering the full preview and scaling that down. Avalonia's
+		// Bitmap.CreateScaledBitmap takes a BitmapInterpolationMode, but that enum
+		// has no true "nearest neighbor" entry, and LowQuality has a history of not
+		// reliably behaving like one (AvaloniaUI/Avalonia#8621). Sampling by hand
+		// guarantees the same crisp, blocky look InterpolationMode.NearestNeighbor
+		// gave you under GDI+.
+		private static unsafe WriteableBitmap CreateThumbnail(Texture tex, int thumbW, int thumbH)
+		{
+			var bmp = new WriteableBitmap(
+				new PixelSize(thumbW, thumbH),
+				_defaultDpi,
+				PixelFormat.Bgra8888,
+				AlphaFormat.Unpremul);
+
+			using (var fb = bmp.Lock())
+			{
+				for (int y = 0; y <  thumbH; y++)
+				{
+					int srcY = y * tex.Height / thumbH;
+					byte* dstRow = (byte*)(fb.Address + y * fb.RowBytes).ToPointer();
+
+					for (int x = 0; x < thumbW; x++)
+					{
+						int srcX = x * tex.Width / thumbW;
+						uint pixel = tex.Pixels[srcY * tex.Width + srcX];
+
+						// Same AARRGGBB -> BGRA little-endian layout as above, so one
+						// 4-byte write reproduces what Color.FromArgb(a, r, g, b) did.
+						*(uint*)(dstRow + x * 4) = pixel;
+					}
 				}
 			}
 
@@ -94,7 +131,7 @@ namespace Glyphborn.Mapper.Editor
 				// sample pixels to avoid iterating a huge array every time; still good collision resistance
 				int step = Math.Max(1, pixels.Length / 64);
 				for (int i = 0; i < pixels.Length; i++)
-					hash = (hash * 31) ^ (int) pixels[i];
+					hash = (hash * 31) ^ (int)pixels[i];
 				hash = (hash * 31) ^ pixels.Length;
 				return hash;
 			}

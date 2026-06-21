@@ -1,13 +1,17 @@
-﻿using Glyphborn.Mapper.Tiles;
+﻿using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
+using Damascus.Mapper.Theme;
+using Glyphborn.Mapper.Editor;
+using Glyphborn.Mapper.Tiles;
 using System;
 using System.Collections.Generic;
-using System.Drawing;
-using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
 using System.Linq;
-using System.Windows.Forms;
 
-namespace Glyphborn.Mapper.Controls
+namespace Damascus.Mapper.Controls
 {
 	public sealed class TilesetControl : Control
 	{
@@ -15,8 +19,8 @@ namespace Glyphborn.Mapper.Controls
 		public byte TilesetIndex;
 
 		public int TilePreviewSize = 32;
-		public int TilePadding = 2; // Prevents adjacent dashed lines from blending into solid lines
-		public int Columns = 8; // Default columns when no tiles are present, matching the Editor Dialog's default layout
+		public int TilePadding = 2;
+		public int Columns = 8;
 
 		public TileSelection? SelectedTile;
 
@@ -24,21 +28,37 @@ namespace Glyphborn.Mapper.Controls
 		private int _selectedSlot = -1;
 		private int _hoverSlot = -1;
 
+		private static readonly IPen SelectedPen = new Pen(Brush.Parse("#0E74CA"), 2);
+		private static readonly IPen EmptyPen = new Pen(Brush.Parse("#37373A"), 1, dashStyle: DashStyle.DashDot);
 
-		public TilesetControl()
+		private static readonly Typeface TileTypeface = new Typeface("Segoe UI", FontStyle.Normal, FontWeight.Normal);
+
+		private static readonly FormattedText addText = new FormattedText("+", System.Globalization.CultureInfo.CurrentCulture,
+								   FlowDirection.LeftToRight, Typeface.Default, 10, Brushes.LightGray);
+
+		private int TotalSlots
 		{
-			// Stops the sidebar from flickering when scrolling or selecting tiles
-			DoubleBuffered = true;
+			get
+			{
+				int maxId = 0;
+				foreach (var t in Tiles)
+					if (t.Id > maxId) maxId = t.Id;
+
+				int total = Math.Max(Tiles.Count, maxId + 32);
+				int rows = (int)Math.Ceiling(total / (float)Columns);
+				return rows * Columns;
+			}
 		}
 
-		protected override void OnMouseDown(MouseEventArgs e)
+		protected override void OnPointerPressed(PointerPressedEventArgs e)
 		{
-			base.OnMouseDown(e);
+			base.OnPointerPressed(e);
 
-			int col = e.X / TilePreviewSize;
-			int row = e.Y / TilePreviewSize;
+			var point = e.GetCurrentPoint(this);
 
-			// Guard against clicks on the right edge spilling past the last column
+			int col = (int)point.Position.X / TilePreviewSize;
+			int row = (int)point.Position.Y / TilePreviewSize;
+
 			if (col >= Columns || col < 0 || row < 0) return;
 
 			int index = row * Columns + col;
@@ -46,138 +66,89 @@ namespace Glyphborn.Mapper.Controls
 			TileDefinition? clickedTile = null;
 			foreach (var t in Tiles)
 			{
-				if (t.Id == index) { clickedTile = t; break; }
+				if (t.Id == index)
+				{
+					clickedTile = t;
+					break;
+				}
 			}
 
 			if (clickedTile != null && (clickedTile.GetPrimitives().FirstOrDefault() != null || clickedTile.Id == 0))
 			{
 				SelectedTile = new TileSelection(TilesetIndex, (ushort)index, clickedTile);
 				TileSelected?.Invoke(SelectedTile.Value);
-				Invalidate();
+				InvalidateVisual();
 			}
 		}
 
-		protected override void OnPaint(PaintEventArgs e)
+		public override void Render(DrawingContext context)
 		{
-			base.OnPaint(e);
+			base.Render(context);
 
-			var g = e.Graphics;
-			g.Clear(BackColor);
-
-			using var indexBrush = new SolidBrush(Color.FromArgb(120, 120, 135));
-			using var nameBrush = new SolidBrush(Color.LightGray);
-			using var indexFont = new Font("Segoe UI", 6.5f);
-
-			int maxTileId = 0;
-			foreach (var t in Tiles)
+			for (int i = 0; i < TotalSlots; i++)
 			{
-				if (t.Id > maxTileId) maxTileId = t.Id;
-			}
+				int col = i % Columns;
+				int row = i / Columns;
 
-			// Use 256 to match the baseline established by GetRequiredHeight()
-			int totalSlots = Math.Max(256, maxTileId + 1);
+				var slotRect = new Rect(col * TilePreviewSize, row * TilePreviewSize, TilePreviewSize, TilePreviewSize);
+				var drawRect = slotRect.Deflate(TilePadding);
 
-			int rows = (int)Math.Ceiling(totalSlots / (float)Columns);
-			totalSlots = rows * Columns;
+				TileDefinition? tile = i < Tiles.Count ? Tiles[i] : null;
+				bool isEmpty = IsEmptySlot(i);
 
-			using (var selectedPen = new Pen(Color.FromArgb(14, 116, 202), 2))
-			using (var emptyPen = new Pen(Color.FromArgb(55, 55, 58), 1) { DashStyle = DashStyle.Dash })
-			using (var borderPen = new Pen(Color.FromArgb(45, 45, 48), 1))
-			using (var font = new Font("Segoe UI", 7f))
-			using (var plusBrush = new SolidBrush(Color.FromArgb(110, 110, 115)))
-			{
-				for (int i = 0; i < totalSlots; i++)
+				if (!isEmpty && tile != null)
 				{
-					int col = i % Columns;
-					int row = i / Columns;
+					if (i == _hoverSlot && i != _selectedSlot)
+						context.FillRectangle(new SolidColorBrush(Avalonia.Media.Colors.White, 0.12), drawRect);
 
-					// Slot rect: aligned to raw grid boundaries (keeps mouse hit-testing correct)
-					var slotRect = new Rectangle(col * TilePreviewSize, row * TilePreviewSize, TilePreviewSize, TilePreviewSize);
-
-					// Draw rect: inset by padding so adjacent borders don't bleed together
-					var drawRect = new Rectangle(
-						slotRect.X + TilePadding,
-						slotRect.Y + TilePadding,
-						slotRect.Width - TilePadding * 2,
-						slotRect.Height - TilePadding * 2);
-
-					// Direct index — Tiles[i].Id == i is always guaranteed by EnsureSlots
-					TileDefinition? tile = i < Tiles.Count ? Tiles[i] : null;
-
-					bool isEmpty = IsEmptySlot(i);
-					bool isAir = i == 0;
-
-					if (!isEmpty && tile != null)
+					if (i == 0 || tile.TileType == TileType.None)
 					{
-						// Hover tint
-						if (i == _hoverSlot && i != _selectedSlot)
-						{
-							using var hoverBrush = new SolidBrush(Color.FromArgb(30, 255, 255, 255));
-							g.FillRectangle(hoverBrush, drawRect);
-						}
-
-						// Render empty/air slots using a clean background diagonal hatch
-						if (isAir || tile.TileType == TileType.None)
-						{
-							using var hatch = new HatchBrush(HatchStyle.DiagonalCross,
-								Color.FromArgb(50, 50, 65), Color.FromArgb(30, 30, 40));
-							g.FillRectangle(hatch, drawRect);
-						}
-						else
-						{
-							// FIX: Safely retrieve the primary thumbnail component from the mesh collection
-							var firstPrimitive = tile.GetPrimitives().FirstOrDefault();
-							if (firstPrimitive?.Texture != null)
-							{
-								try
-								{
-									// Wrap in a using statement to properly dispose GDI+ Bitmap unmanaged resources
-									using var thumb = TextureToBitmap(firstPrimitive.Texture);
-									g.DrawImage(thumb, drawRect);
-								}
-								catch { g.FillRectangle(Brushes.DimGray, drawRect); }
-							}
-							else
-							{
-								// Named/Logic tile but missing a texture resource — red X indicator
-								g.FillRectangle(Brushes.Black, drawRect);
-								using var xPen = new Pen(Color.FromArgb(180, 50, 50), 1.5f);
-								g.DrawLine(xPen, drawRect.Left + 3, drawRect.Top + 3, drawRect.Right - 3, drawRect.Bottom - 3);
-								g.DrawLine(xPen, drawRect.Right - 3, drawRect.Top + 3, drawRect.Left + 3, drawRect.Bottom - 3);
-							}
-						}
-
-						g.DrawRectangle(borderPen, drawRect);
-
-						// Tile name along the bottom strip
-						if (!isAir && tile.TileType != TileType.None && !string.IsNullOrEmpty(tile.Name))
-						{
-							var nameRect = new RectangleF(drawRect.X + 2, drawRect.Bottom - 13, drawRect.Width - 4, 12);
-							var fmt = new StringFormat { Trimming = StringTrimming.EllipsisCharacter };
-							g.DrawString(tile.Name, indexFont, nameBrush, nameRect, fmt);
-						}
+						context.FillRectangle(MapperTheme.ContainerBackground, drawRect);
 					}
 					else
 					{
-						// FIX: Corrected duplicate block copy-paste error.
-						// Unallocated palette slots now draw a clean dashed border with a centered plus sign.
-						g.DrawRectangle(emptyPen, drawRect);
-
-						int cx = drawRect.X + (drawRect.Width / 2);
-						int cy = drawRect.Y + (drawRect.Height / 2);
-						g.DrawString("+", font, plusBrush, cx - 4, cy - 6);
+						var primitive = tile.GetPrimitives().FirstOrDefault();
+						if (primitive?.Texture != null)
+						{
+							var thumb = TextureToWriteableBitmap(primitive.Texture);
+							context.DrawImage(thumb, drawRect);
+						}
 					}
 
-					// Slot index — always visible in the top-left corner
-					g.DrawString(i.ToString(), indexFont, indexBrush, drawRect.X + 2, drawRect.Y + 2);
+					context.DrawRectangle(null, new Pen(Brushes.DimGray), drawRect);
 
-					// Selection outline — drawn slightly outside drawRect for visual pop
-					if (i == _selectedSlot)
+					if (!string.IsNullOrEmpty(tile.Name))
 					{
-						g.DrawRectangle(selectedPen,
-							drawRect.X - 1, drawRect.Y - 1,
-							drawRect.Width + 2, drawRect.Height + 2);
+						var text = new FormattedText(
+							tile.Name,
+							System.Globalization.CultureInfo.CurrentCulture,
+							FlowDirection.LeftToRight,
+							TileTypeface,
+							9.0, // Smaller font size often fits better in 32x32 tiles
+							Brushes.LightGray)
+						{
+							MaxTextWidth = drawRect.Width - 4,
+							Trimming = TextTrimming.CharacterEllipsis
+						};
+						context.DrawText(text, new Point(drawRect.X + 2, drawRect.Bottom - 12));
 					}
+				}
+				else
+				{
+					context.DrawRectangle(null, EmptyPen, drawRect);
+
+					var centerX = drawRect.X + (drawRect.Width / 2);
+					var centerY = drawRect.Y + (drawRect.Height / 2);
+					context.DrawText(addText, new Point(centerX + 4, centerY));
+				}
+
+				var index = new FormattedText(i.ToString(), System.Globalization.CultureInfo.CurrentCulture,
+						   FlowDirection.LeftToRight, Typeface.Default, 10, Brushes.LightGray);
+				context.DrawText(index, new Point(drawRect.X + 2, drawRect.Y + 2));
+
+				if (i == _selectedSlot)
+				{
+					context.DrawRectangle(null, SelectedPen, drawRect.Inflate(1));
 				}
 			}
 		}
@@ -198,40 +169,50 @@ namespace Glyphborn.Mapper.Controls
 				if (t.Id > maxTileId) maxTileId = t.Id;
 			}
 
-			int totalSlots = Math.Max(256, maxTileId + 1);
-			int rows = (int)Math.Ceiling(totalSlots / (float)Columns);
+			int total = Math.Max(Tiles.Count, maxTileId + 32);
+			int rows = (int)Math.Ceiling(total / (float)Columns);
 
 			return rows * TilePreviewSize;
 		}
 
-		private static Bitmap TextureToBitmap(Texture tex)
+		private static WriteableBitmap TextureToWriteableBitmap(Texture tex)
 		{
-			var bmp = new Bitmap(tex.Width, tex.Height, PixelFormat.Format32bppArgb);
-			for (int py = 0; py < tex.Height; py++)
-				for (int px = 0; px < tex.Width; px++)
+			// 1. Create the WriteableBitmap
+			var bitmap = new WriteableBitmap(
+				new PixelSize(tex.Width, tex.Height),
+				new Vector(96, 96), // Standard DPI
+				PixelFormat.Bgra8888); // Avalonia's standard format
+
+			// 2. Lock the bitmap to get direct access to the back buffer
+			using (var frame = bitmap.Lock())
+			{
+				unsafe
 				{
-					uint p = tex.Pixels[py * tex.Width + px];
-					bmp.SetPixel(px, py, Color.FromArgb(
-						(int)(p >> 24 & 0xFF),
-						(int)(p >> 16 & 0xFF),
-						(int)(p >> 8 & 0xFF),
-						(int)(p & 0xFF)));
+					// Get a pointer to the start of the memory
+					uint* backBuffer = (uint*)frame.Address;
+					int stride = frame.RowBytes;
+
+					for (int py = 0; py < tex.Height; py++)
+					{
+						for (int px = 0; px < tex.Width; px++)
+						{
+							uint p = tex.Pixels[py * tex.Width + px];
+
+							// Extract components
+							byte a = (byte)(p >> 24);
+							byte r = (byte)(p >> 16);
+							byte g = (byte)(p >> 8);
+							byte b = (byte)(p);
+
+							// Reconstruct into BGRA format (B | G << 8 | R << 16 | A << 24)
+							// This puts the color data in the order Avalonia expects (Little Endian)
+							backBuffer[py * (stride / 4) + px] = (uint)(b | (g << 8) | (r << 16) | (a << 24));
+						}
+					}
 				}
-			return bmp;
-		}
-	}
+			}
 
-	public readonly struct TileSelection
-	{
-		public readonly byte TilesetIndex;
-		public readonly ushort TileIndex;
-		public readonly TileDefinition Tile;
-
-		public TileSelection(byte tilesetIndex, ushort tileIndex, TileDefinition tile)
-		{
-			TilesetIndex = tilesetIndex;
-			TileIndex = tileIndex;
-			Tile = tile;
+			return bitmap;
 		}
 	}
 }

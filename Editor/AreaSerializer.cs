@@ -1,5 +1,5 @@
-﻿using Glyphborn.Mapper.Tiles;
-using System.Drawing;
+﻿using Avalonia.Media;
+using Glyphborn.Mapper.Tiles;
 using System.IO;
 using System.Text;
 
@@ -181,7 +181,7 @@ namespace Glyphborn.Mapper.Editor
 					{
 						Id = roomId,
 						Name = roomName,
-						Color = Color.FromArgb(r, g, b)
+						Color = Color.FromArgb(255, r, g, b)
 					});
 				}
 			}

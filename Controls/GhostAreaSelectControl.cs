@@ -1,14 +1,18 @@
-﻿using Glyphborn.Mapper.Editor;
+﻿using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using Glyphborn.Mapper.Editor;
 using Glyphborn.Mapper.Tiles;
 using System.Collections.Generic;
-using System.Drawing;
-using System.Drawing.Imaging;
+using System.Globalization;
 using System.Linq;
-using System.Windows.Forms;
 
-namespace Glyphborn.Mapper.Controls
+namespace Damascus.Mapper.Controls
 {
-	public class GhostAreaSelectControl : Control
+	sealed class GhostAreaSelectControl : Control
 	{
 		private AreaDocument? _area;
 		private HashSet<(int x, int y)> _selectedCells = new();
@@ -16,12 +20,21 @@ namespace Glyphborn.Mapper.Controls
 		private const int CELL = 64;
 		private const int HEADER = 30;
 
+		private static FormattedText GenerationFailed = new FormattedText("!", CultureInfo.CurrentCulture, FlowDirection.LeftToRight, new Typeface("Segoe UI"), 16, Brushes.White);
+		private static FormattedText GenerationError = new FormattedText("X", CultureInfo.CurrentCulture, FlowDirection.LeftToRight, new Typeface("Segoe UI"), 16, Brushes.White);
+		private FormattedText AreaSize = new FormattedText($"Area: 0×0", CultureInfo.CurrentCulture, FlowDirection.LeftToRight, new Typeface("Segoe UI"), 16, Brushes.White);
+
 		public void SetArea(AreaDocument area)
 		{
 			_area = area;
 			_selectedCells.Clear();
-			Size = new Size(area.Width * CELL, area.Height * CELL + HEADER);
-			Invalidate();
+			Width = area.Width * CELL;
+			Height = area.Height * CELL + HEADER;
+
+			HorizontalAlignment = HorizontalAlignment.Left;
+			VerticalAlignment = VerticalAlignment.Top;
+
+			InvalidateVisual();
 		}
 
 		public List<(int x, int y, MapDocument map)> GetSelectedCells()
@@ -36,28 +49,20 @@ namespace Glyphborn.Mapper.Controls
 			return result;
 		}
 
-		protected override void OnPaint(PaintEventArgs e)
+		public override void Render(DrawingContext context)
 		{
-			base.OnPaint(e);
+			base.Render(context);
 
 			if (_area == null)
 				return;
 
-			var g = e.Graphics;
-			g.Clear(BackColor);
-
-			// Draw debug border
-			g.DrawString($"Area: {_area.Width}×{_area.Height}", Font, Brushes.White, 5, 5);
+			context.DrawText(AreaSize, new Point(5, 5));
 
 			for (int y = 0; y < _area.Height; y++)
+			{
 				for (int x = 0; x < _area.Width; x++)
 				{
-					var rect = new Rectangle(
-						x * CELL,
-						y * CELL + HEADER,
-						CELL,
-						CELL
-					);
+					var rect = new Rect(x * CELL, y * CELL + HEADER, CELL, CELL);
 
 					var map = _area.Maps[x, y];
 
@@ -73,20 +78,20 @@ namespace Glyphborn.Mapper.Controls
 
 							if (map.MiniPreview != null)
 							{
-								g.DrawImage(map.MiniPreview, rect);
+								context.DrawImage(
+									map.MiniPreview,
+									rect);
 							}
 							else
 							{
-								// Preview generation failed
-								g.FillRectangle(Brushes.DarkRed, rect);
-								g.DrawString("!", Font, Brushes.White, rect.X + 20, rect.Y + 20);
+								context.FillRectangle(Brushes.DarkRed, rect);
+								context.DrawText(GenerationFailed, new Point(rect.X + 20, rect.Y + 20));
 							}
 						}
 						catch
 						{
-							// Draw error indicator
-							g.FillRectangle(Brushes.DarkRed, rect);
-							g.DrawString("X", Font, Brushes.White, rect.X + 20, rect.Y + 20);
+							context.FillRectangle(Brushes.DarkRed, rect);
+							context.DrawText(GenerationError, new Point(rect.X + 20, rect.Y + 20));
 						}
 					}
 					else
@@ -94,102 +99,100 @@ namespace Glyphborn.Mapper.Controls
 						continue;
 					}
 
-					// Grid
-					g.DrawRectangle(Pens.DimGray, rect);
+					context.DrawRectangle(null, new Pen(Brushes.DimGray), rect);
 
-					// Active map highlight
-					if (_selectedCells.Contains((x, y)))
-					{
-						using var pen = new Pen(Color.DodgerBlue, 3);
-						g.DrawRectangle(pen, rect);
-					}
+					if (_selectedCells.Contains((x,y)))
+						context.DrawRectangle(null, new Pen(Brushes.DodgerBlue, 3), rect);
 				}
+			}
 		}
 
-		public static Bitmap BuildMiniPreview(MapDocument map, AreaDocument area)
+		public static WriteableBitmap BuildMiniPreview(MapDocument map, AreaDocument area)
 		{
 			const int TILE_PIXELS = 2;
 			const int SIZE = MapDocument.WIDTH * TILE_PIXELS;
 
-			var bmp = new Bitmap(SIZE, SIZE, PixelFormat.Format32bppArgb);
+			var bmp = new WriteableBitmap(
+				new PixelSize(SIZE, SIZE),
+				new Vector(96, 96),
+				Avalonia.Platform.PixelFormat.Bgra8888,
+				Avalonia.Platform.AlphaFormat.Premul);
 
-			using var graphics = Graphics.FromImage(bmp);
-			graphics.Clear(Color.Black);
-
-			for (int ty = 0; ty < MapDocument.HEIGHT; ty++)
+			using var fb = bmp.Lock();
+			unsafe
 			{
-				for (int tx = 0; tx < MapDocument.WIDTH; tx++)
+				var ptr = (uint*)fb.Address;
+
+				// Fill black
+				for (int i = 0; i < SIZE * SIZE; i++)
+					ptr[i] = 0xFF000000;
+
+				for (int ty = 0; ty < MapDocument.HEIGHT; ty++)
 				{
-					Texture? targetTex = null;
-
-					// Look from the topmost layer downwards to find the first visible surface
-					for (int l = MapDocument.LAYERS - 1; l >= 0; l--)
+					for (int tx = 0; tx < MapDocument.WIDTH; tx++)
 					{
-						var t = map.Tiles[l][ty][tx];
+						Texture? targetTex = null;
 
-						// Guard against unassigned tilesets/tile entries out of range
-						if (t.Tileset >= area.Tilesets.Count)
-							continue;
+						for (int l = MapDocument.LAYERS - 1; l >= 0; l--)
+						{
+							var t = map.Tiles[l][ty][tx];
+							if (t.Tileset >= area.Tilesets.Count) continue;
+							var ts = area.Tilesets[t.Tileset];
+							if (t.TileId >= ts.Tiles.Count) continue;
+							var def = ts.Tiles[t.TileId];
+							if (def.TileType == TileType.None) continue;
+							var firstPrimitive = def.GetPrimitives().FirstOrDefault();
+							if (firstPrimitive?.Texture == null) continue;
+							targetTex = firstPrimitive.Texture;
+							break;
+						}
 
-						var ts = area.Tilesets[t.Tileset];
-						if (t.TileId >= ts.Tiles.Count)
-							continue;
+						if (targetTex == null) continue;
 
-						var def = ts.Tiles[t.TileId];
+						int sx = targetTex.Width / 2;
+						int sy = targetTex.Height / 2;
+						uint raw = targetTex.Pixels[sy * targetTex.Width + sx];
 
-						// Skip air/empty slots entirely
-						if (def.TileType == TileType.None)
-							continue;
+						byte a = (byte)(raw >> 24);
+						byte r = (byte)(raw >> 16);
+						byte g = (byte)(raw >> 8);
+						byte b = (byte)(raw);
 
-						// Safe extraction from the multi-primitive mesh layout
-						var firstPrimitive = def.GetPrimitives().FirstOrDefault();
-						if (firstPrimitive?.Texture == null)
-							continue; // It's a non-visual logic/trigger tile; keep looking down layers
+						// Premultiply for Avalonia's Bgra8888 Premul format
+						float af = a / 255f;
+						byte pr = (byte)(r * af);
+						byte pg = (byte)(g * af);
+						byte pb = (byte)(b * af);
 
-						// We found our highest visual tile!
-						targetTex = firstPrimitive.Texture;
-						break;
+						uint pixel =
+							  pb
+							| ((uint)pg << 8)
+							| ((uint)pr << 16)
+							| ((uint)a << 24);
+
+						for (int py = 0; py < TILE_PIXELS; py++)
+							for (int px = 0; px < TILE_PIXELS; px++)
+								ptr[(ty * TILE_PIXELS + py) * SIZE + (tx * TILE_PIXELS + px)] = pixel;
 					}
-
-					// If no visual tile exists in this column, leave it as the background color (Black)
-					if (targetTex == null)
-						continue;
-
-					var src = targetTex.Pixels;
-
-					// Sample center pixel (fast & stable preview rendering)
-					int sx = targetTex.Width / 2;
-					int sy = targetTex.Height / 2;
-
-					uint pixelColor = src[sy * targetTex.Width + sx];
-
-					byte a = (byte)(pixelColor >> 24);
-					byte r = (byte)(pixelColor >> 16);
-					byte g = (byte)(pixelColor >> 8);
-					byte b = (byte)(pixelColor);
-
-					Color c = Color.FromArgb(a, r, g, b);
-
-					using var brush = new SolidBrush(c);
-					graphics.FillRectangle(brush, tx * TILE_PIXELS, ty * TILE_PIXELS, TILE_PIXELS, TILE_PIXELS);
 				}
 			}
 
 			return bmp;
 		}
 
-		protected override void OnMouseDown(MouseEventArgs e)
+		protected override void OnPointerPressed(PointerPressedEventArgs e)
 		{
-			base.OnMouseDown(e);
+			base.OnPointerPressed(e);
 
 			if (_area == null)
 				return;
 
-			if (e.Y < HEADER)
-				return;
+			var pos = e.GetPosition(this);
 
-			int x = e.X / CELL;
-			int y = (e.Y - HEADER) / CELL;
+			if (pos.Y < HEADER) return;
+
+			int x = (int)(pos.X / CELL);
+			int y = (int)((pos.Y - HEADER) / CELL);
 
 			if (x < 0 || y < 0 || x >= _area.Width || y >= _area.Height)
 				return;
@@ -205,7 +208,7 @@ namespace Glyphborn.Mapper.Controls
 			else
 				_selectedCells.Add(cell);
 
-			Invalidate();
+			InvalidateVisual();
 		}
 	}
 }

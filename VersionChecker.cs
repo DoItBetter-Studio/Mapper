@@ -4,11 +4,11 @@ using System.IO;
 using System.Net.Http;
 using System.Threading.Tasks;
 
-namespace Glyphborn.Mapper
+namespace Damascus.Mapper
 {
 	public static class VersionChecker
 	{
-		public const string LOCAL_VERSION = "1.2.1";
+		public const string LOCAL_VERSION = "2.0.0";
 		const string VERSION_URL = "https://raw.githubusercontent.com/DoItBetter-Studio/Mapper/main/version.txt";
 		const string UPDATE_ZIP = "update.zip";
 
@@ -43,7 +43,8 @@ namespace Glyphborn.Mapper
 
 		static async Task<string> DownloadUpdateAsync(string version)
 		{
-			string url = $"https://github.com/DoItBetter-Studio/Mapper/releases/download/v{version}/Mapper-win-x64.zip";
+			string platform = OperatingSystem.IsWindows() ? "win-x64" : "linux-x64";
+			string url = $"https://github.com/DoItBetter-Studio/Mapper/releases/download/v{version}/Mapper-{platform}.zip";
 
 			string exeDir = Path.GetDirectoryName(Environment.ProcessPath!)!;
 			string zipPath = Path.Combine(exeDir, UPDATE_ZIP);
@@ -60,9 +61,27 @@ namespace Glyphborn.Mapper
 			string exeDir = Path.GetDirectoryName(exePath)!;
 			int pid = Environment.ProcessId;
 
+			string updaterPath = Path.Combine(exeDir, OperatingSystem.IsWindows() ? "Updater.exe" : "Updater");
+
+			// Ensure the Updater binary is executable on Linux/macOS
+			if (!OperatingSystem.IsWindows())
+			{
+				try
+				{
+					File.SetUnixFileMode(updaterPath,
+						UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+						UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+						UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+				}
+				catch (Exception ex)
+				{
+					Debug.WriteLine($"Warning: could not set updater execute permissions: {ex.Message}");
+				}
+			}
+
 			var psi = new ProcessStartInfo
 			{
-				FileName = Path.Combine(exeDir, OperatingSystem.IsWindows() ? "Updater.exe" : "Updater"),
+				FileName = updaterPath,
 				Arguments = $"{pid} \"{zipPath}\" \"{exePath}\"",
 				UseShellExecute = false
 			};

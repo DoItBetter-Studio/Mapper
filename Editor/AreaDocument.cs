@@ -1,7 +1,7 @@
-﻿using Glyphborn.Mapper.Tiles;
+﻿using Avalonia.Media;
+using Glyphborn.Mapper.Tiles;
 using System;
 using System.Collections.Generic;
-using System.Drawing;
 using System.Linq;
 
 namespace Glyphborn.Mapper.Editor
@@ -151,11 +151,13 @@ namespace Glyphborn.Mapper.Editor
 			var used = new HashSet<uint>(Rooms.Select(r => r.Id));
 			while (used.Contains(nextId)) nextId++;
 
-			int hash = (int)(nextId * 2654435761u);
-			var color = Color.FromArgb(
-				100 + (Math.Abs(hash >> 16) % 155),
-				100 + (Math.Abs(hash >> 8) % 155),
-				100 + (Math.Abs(hash) % 155));
+			uint hash = nextId * 2654435761u;
+
+			byte r = (byte)(100 + (Math.Abs((int)(hash >> 16)) % 155));
+			byte g = (byte)(100 + (Math.Abs((int)(hash >> 8)) % 155));
+			byte b = (byte)(100 + (Math.Abs((int)hash) % 155));
+
+			var color = Color.FromArgb(255, r, g, b);
 
 			var room = new RoomDefinition { Id = nextId, Name = $"Room {nextId}", Color = color };
 			Rooms.Add(room);

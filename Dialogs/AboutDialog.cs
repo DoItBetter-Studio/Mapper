@@ -1,25 +1,36 @@
-﻿using System.Windows.Forms;
+﻿using Avalonia.Controls;
+using Damascus.Mapper.Theme;
 
-namespace Glyphborn.Mapper.Dialogs
+namespace Damascus.Mapper.Dialogs
 {
-	public class AboutDialog : Form
+	sealed class AboutDialog : Window
 	{
 		public AboutDialog()
 		{
-			Text = "About";
+			Title = "About";
 			Width = 400;
 			Height = 300;
-			StartPosition = FormStartPosition.CenterParent;
-			FormBorderStyle = FormBorderStyle.FixedDialog;
-			MaximizeBox = false;
-			MinimizeBox = false;
+			WindowStartupLocation = WindowStartupLocation.CenterOwner;
+			CanMaximize = false;
+			CanMinimize = false;
+			CanResize = false;
+			Background = MapperTheme.ContainerBackground;
+			Icon = MapperTheme.Icon;
+
+			var stackPanel = new StackPanel()
+			{
+				HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+				VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+			};
+
 			var label = new Label
 			{
-				Text = $"Mapper {VersionChecker.LOCAL_VERSION}\r\nWorld Authoring Tool\r\n\r\nDoItBetter Studio\r\nStarted: December 2025\r\n\r\nProprietary Software\r\nAll Rights Reserved\r\n",
-				Dock = DockStyle.Fill,
-				TextAlign = System.Drawing.ContentAlignment.MiddleCenter
+				Content = $"Mapper {VersionChecker.LOCAL_VERSION}\r\nWorld Authoring Tool\r\n\r\nDoItBetter Studio\r\nStarted: December 2025\r\n\r\nProprietary Software\r\nAll Rights Reserved\r\n",
 			};
-			Controls.Add(label);
+
+			stackPanel.Children.Add(label);
+
+			Content = stackPanel;
 		}
 	}
 }

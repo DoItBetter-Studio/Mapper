@@ -1,13 +1,16 @@
-﻿using Glyphborn.Mapper.Editor;
+﻿using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Media;
+using Avalonia.Threading;
+using Damascus.Mapper.Theme;
+using Glyphborn.Mapper.Editor;
 using Glyphborn.Mapper.Tiles;
 using System;
 using System.Collections.Generic;
-using System.Drawing;
-using System.Drawing.Imaging;
 using System.Linq;
-using System.Windows.Forms;
 
-namespace Glyphborn.Mapper.Controls
+namespace Damascus.Mapper.Controls
 {
 	public sealed class MapCanvasControl : Control
 	{
@@ -19,52 +22,48 @@ namespace Glyphborn.Mapper.Controls
 		private bool _isErasing;
 		private MapEdge _hoverEdge = MapEdge.Inside;
 
-		// Track maps created during the current mouse-drag so we only create each target once.
 		private readonly HashSet<long> _createMapsThisDrag = new();
 
-		// NEW: ensure edge-create happens only once per mouse press
 		private bool _edgeCreateTriggered;
 
-		public MapCanvasControl()
-		{
-			DoubleBuffered = true;
-			SetStyle(ControlStyles.ResizeRedraw, true);
-		}
+		private static Pen MapEdgePen = new Pen(Brushes.Crimson, 3);
+		private static Pen MapGridPen = new Pen(Brushes.White);
+
+		public MapCanvasControl() { }
 
 		private int ComputeTileSize()
 		{
 			if (MapDocument == null)
 				return 1;
 
-			int sizeX = ClientSize.Width / MapDocument.WIDTH;
-			int sizeY = ClientSize.Height / MapDocument.HEIGHT - 2;
+			double sizeX = Bounds.Width / MapDocument.WIDTH;
+			double sizeY = (Bounds.Height / MapDocument.HEIGHT) - 2;
 
-			return Math.Max(1, Math.Min(sizeX, sizeY));
+			int result = (int)Math.Max(1, Math.Min(sizeX, sizeY));
+
+			return result;
 		}
 
-		protected override void OnPaint(PaintEventArgs e)
+		public override void Render(DrawingContext context)
 		{
-			base.OnPaint(e);
+			base.Render(context);
 
-			if (MapDocument == null || State == null || AreaDocument == null)
-				return;
+			context.DrawRectangle(MapperTheme.ContainerBackground, null, new Rect(0, 0, Bounds.Width, Bounds.Height));
 
-			var g = e.Graphics;
+			if (MapDocument == null || State == null || AreaDocument == null) return;
 
 			int tileSize = ComputeTileSize();
 
 			int mapW = MapDocument.WIDTH * tileSize;
 			int mapH = MapDocument.HEIGHT * tileSize;
 
-			int ox = (ClientSize.Width - mapW) / 2;
-			int oy = (ClientSize.Height - mapH) / 2;
+			int ox = (int)(Bounds.Width - mapW) / 2;
+			int oy = (int)(Bounds.Height - mapH) / 2;
 
-			// Iterate one cell beyond each edge so we can draw neighbor tiles that touch the edges.
 			for (int ty = -1; ty <= MapDocument.HEIGHT; ty++)
 			{
 				for (int tx = -1; tx <= MapDocument.WIDTH; tx++)
 				{
-					// Determine which map supplies this tile (current or an adjacent neighbor).
 					int mapOffsetX = 0;
 					int mapOffsetY = 0;
 					int srcX = tx;
@@ -92,7 +91,6 @@ namespace Glyphborn.Mapper.Controls
 						srcY = 0;
 					}
 
-					// If we are outside the current map bounds, find the neighbor map.
 					MapDocument? srcMap = MapDocument;
 					if (mapOffsetX != 0 || mapOffsetY != 0)
 					{
@@ -100,14 +98,13 @@ namespace Glyphborn.Mapper.Controls
 						int neighborMapY = State.ActiveMapY + mapOffsetY;
 
 						if (!AreaDocument.HasMap(neighborMapX, neighborMapY))
-							continue; // neighbor not present -> nothing to draw here
+							continue;
 
 						srcMap = AreaDocument.GetMap(neighborMapX, neighborMapY);
 						if (srcMap == null)
 							continue;
 					}
 
-					// For each tile, render underlying layers with fade then the current layer.
 					for (byte layer = 0; layer < State.CurrentLayer; layer++)
 					{
 						float distance = State.CurrentLayer - layer;
@@ -121,27 +118,25 @@ namespace Glyphborn.Mapper.Controls
 							alpha = 1.0f - Math.Clamp(t, 0.25f, 1f);
 						}
 
-						DrawTile(g, srcMap, srcX, srcY, tileSize, ox, oy, layer, alpha);
+						DrawTile(context, srcMap, srcX, srcY, tileSize, ox, oy, layer, alpha);
 					}
 
-					DrawTile(g, srcMap, srcX, srcY, tileSize, ox, oy, State.CurrentLayer, 1.0f);
+					DrawTile(context, srcMap, srcX, srcY, tileSize, ox, oy, State.CurrentLayer, 1.0f);
 				}
 			}
 
 			if (State.ShowGrid)
-				DrawGrid(g, tileSize, ox, oy);
+				DrawGrid(context, tileSize, ox, oy);
 
 			if (_hoverEdge != MapEdge.Inside)
-				DrawEdgeHighlight(g, tileSize, ox, oy);
+				DrawEdgeHighlight(context, tileSize, ox, oy);
 		}
 
-		// Draw tile from an explicit source map at the given source tile coords (0..WIDTH-1 / 0..HEIGHT-1).
-		private void DrawTile(Graphics g, MapDocument srcMap, int sx, int sy,
-					  int tileSize, int ox, int oy, int layer, float alpha = 1.0f)
+		private void DrawTile(DrawingContext context, MapDocument srcMap, int srcX, int srcY, int tileSize, int ox, int oy, int layer, float alpha = 1.0f)
 		{
-			if (sx < 0 || sy < 0 || sx >= MapDocument.WIDTH || sy >= MapDocument.HEIGHT) return;
+			if (srcX < 0 || srcY < 0 || srcX >= MapDocument.WIDTH || srcY >= MapDocument.HEIGHT) return;
 
-			var tileRef = srcMap.Tiles[layer][sy][sx];
+			var tileRef = srcMap.Tiles[layer][srcY][srcX];
 			if (tileRef.TileId == 0) return;
 			if (tileRef.Tileset >= AreaDocument!.Tilesets.Count) return;
 
@@ -149,24 +144,22 @@ namespace Glyphborn.Mapper.Controls
 
 			TileDefinition? def = null;
 
-			foreach (var t in tileset.Tiles)
+			foreach (var tile in tileset.Tiles)
 			{
-				if (t.Id == tileRef.TileId)
+				if (tile.Id == tileRef.TileId)
 				{
-					def = t;
+					def = tile;
 					break;
 				}
 			}
 
-			if (def == null || def.TileType == TileType.None)
-				return;
+			if (def == null || def.TileType == TileType.None) return;
 
-			// Resolve screen position
 			int px, py;
 			if (ReferenceEquals(srcMap, MapDocument))
 			{
-				px = ox + sx * tileSize;
-				py = oy + sy * tileSize;
+				px = ox + srcX * tileSize;
+				py = oy + srcY * tileSize;
 			}
 			else
 			{
@@ -181,55 +174,65 @@ namespace Glyphborn.Mapper.Controls
 
 				int dx = neighborMapX - State!.ActiveMapX;
 				int dy = neighborMapY - State.ActiveMapY;
-				px = ox + (dx * MapDocument.WIDTH + sx) * tileSize;
-				py = oy + (dy * MapDocument.HEIGHT + sy) * tileSize;
+				px = ox + (dx * MapDocument.WIDTH + srcX) * tileSize;
+				py = oy + (dy * MapDocument.HEIGHT + srcY) * tileSize;
 			}
 
-			// Draw tile texture
-			var dest = new Rectangle(px, py, tileSize, tileSize);
+			var dest = new Rect(px, py, tileSize, tileSize);
 			var preview = TilePreviewer.GetPreview(def.GetPrimitives().FirstOrDefault()!.Texture);
 
-			if (alpha < 1.0f)
+			bool hasAlpha = alpha < 1.0f;
+			IDisposable? opacityState = hasAlpha ? context.PushOpacity(alpha) : null;
+
+			try
 			{
-				var cm = new ColorMatrix { Matrix33 = alpha };
-				using var ia = new ImageAttributes();
-				ia.SetColorMatrix(cm);
-				g.DrawImage(preview, dest, 0, 0, preview.Width, preview.Height, GraphicsUnit.Pixel, ia);
+				context.DrawImage(preview, new Rect(0, 0, preview.Size.Width, preview.Size.Height), dest);
 			}
-			else
+			finally
 			{
-				g.DrawImage(preview, dest);
+				opacityState?.Dispose();
 			}
 
-			// Room overlay — always draw if tile has a room, highlight active room
 			if (State!.Tool == Tool.RoomBuilder && tileRef.RoomID.HasValue)
 			{
 				uint roomId = tileRef.RoomID.Value;
 				var roomDef = AreaDocument?.Rooms.FirstOrDefault(r => r.Id == roomId);
-				var roomColor = roomDef?.Color ?? Color.FromArgb(
-					(int)(roomId * 2654435761u >> 16) & 0xFF,
-					(int)(roomId * 2654435761u >> 8) & 0xFF,
-					(int)(roomId * 2654435761u) & 0xFF);
 
-				// Active room is fully opaque, others are dimmer
-				int overlayAlpha = roomId == State.CurrentRoomID ? 140 : 70;
-				using var brush = new SolidBrush(Color.FromArgb(overlayAlpha, roomColor));
-				g.FillRectangle(brush, dest);
+				// Generate base color (Using Avalonia's Color.FromRgb)
+				var roomColor = roomDef?.Color ?? Color.FromRgb(
+					(byte)((roomId * 2654435761u >> 16) & 0xFF),
+					(byte)((roomId * 2654435761u >> 8) & 0xFF),
+					(byte)((roomId * 2654435761u) & 0xFF));
+
+				// Map 0-255 byte alpha to 0.0-1.0 double opacity for Avalonia
+				double overlayOpacity = (roomId == State.CurrentRoomID) ? (140 / 255.0) : (70 / 255.0);
+
+				var brush = new SolidColorBrush(roomColor);
+
+				using (context.PushOpacity(overlayOpacity))
+				{
+					context.FillRectangle(brush, dest);
+				}
 
 				// ID label on larger tile sizes only
 				if (tileSize >= 12)
 				{
-					using var font = new Font("Segoe UI", Math.Max(6f, tileSize / 5f), FontStyle.Bold);
-					g.DrawString(roomId.ToString(), font, Brushes.White, px + 2, py + 2);
+					var typeface = new Typeface("Segoe UI", FontStyle.Normal, FontWeight.Bold);
+					var formattedText = new FormattedText(
+						roomId.ToString(),
+						System.Globalization.CultureInfo.CurrentCulture,
+						FlowDirection.LeftToRight,
+						typeface,
+						Math.Max(6.0, tileSize / 5.0),
+						Brushes.White);
+
+					context.DrawText(formattedText, new Point(px + 2, py + 2));
 				}
 			}
 		}
 
-		private void DrawGrid(Graphics g, int tileSize, int ox, int oy)
+		private void DrawGrid(DrawingContext context, int tileSize, int ox, int oy)
 		{
-			using var pen1 = new Pen(Color.FromArgb(80, Color.Crimson), 3f);
-			using var pen2 = new Pen(Color.FromArgb(80, Color.White), 1f);
-
 			int mapW = MapDocument.WIDTH * tileSize;
 			int mapH = MapDocument.HEIGHT * tileSize;
 
@@ -239,11 +242,11 @@ namespace Glyphborn.Mapper.Controls
 
 				if (x == 0 || x == 32)
 				{
-					g.DrawLine(pen1, px, oy - tileSize, px, oy + mapH + tileSize);
+					context.DrawLine(MapEdgePen, new Point(px, oy - tileSize), new Point(px, oy + mapH + tileSize));
 				}
 				else
 				{
-					g.DrawLine(pen2, px, oy - tileSize, px, oy + mapH + tileSize);
+					context.DrawLine(MapGridPen, new Point(px, oy - tileSize), new Point(px, oy + mapH + tileSize));
 				}
 			}
 
@@ -253,64 +256,66 @@ namespace Glyphborn.Mapper.Controls
 
 				if (y == 0 || y == 32)
 				{
-					g.DrawLine(pen1, ox - tileSize, py, ox + mapW + tileSize, py);
+					context.DrawLine(MapEdgePen, new Point(ox - tileSize, py), new Point(ox + mapW + tileSize, py));
 				}
 				else
 				{
-					g.DrawLine(pen2, ox - tileSize, py, ox + mapW + tileSize, py);
+					context.DrawLine(MapGridPen, new Point(ox - tileSize, py), new Point(ox + mapW + tileSize, py));
 				}
 			}
 		}
 
-		private void DrawEdgeHighlight(Graphics g, int tileSize, int ox, int oy)
+		private void DrawEdgeHighlight(DrawingContext context, int tileSize, int ox, int oy)
 		{
-			using var brush = new SolidBrush(Color.FromArgb(80, Color.DodgerBlue));
+			var brush = new SolidColorBrush(Color.FromArgb(80, 30, 144, 255)); // Equivalent to DodgerBlue
 
-			Rectangle rect = _hoverEdge switch
+			Rect? rect = _hoverEdge switch
 			{
-				MapEdge.North => new Rectangle(ox, oy - tileSize, MapDocument.WIDTH * tileSize, tileSize),
-				MapEdge.South => new Rectangle(ox, oy + MapDocument.HEIGHT * tileSize, MapDocument.WIDTH * tileSize, tileSize),
-				MapEdge.West => new Rectangle(ox - tileSize, oy, tileSize, MapDocument.HEIGHT * tileSize),
-				MapEdge.East => new Rectangle(ox + MapDocument.WIDTH * tileSize, oy, tileSize, MapDocument.HEIGHT * tileSize),
+				MapEdge.North => new Rect(ox, oy - tileSize, MapDocument.WIDTH * tileSize, tileSize),
+				MapEdge.South => new Rect(ox, oy + MapDocument.HEIGHT * tileSize, MapDocument.WIDTH * tileSize, tileSize),
+				MapEdge.West => new Rect(ox - tileSize, oy, tileSize, MapDocument.HEIGHT * tileSize),
+				MapEdge.East => new Rect(ox + MapDocument.WIDTH * tileSize, oy, tileSize, MapDocument.HEIGHT * tileSize),
 
-				MapEdge.NorthWest => new Rectangle(ox - tileSize, oy - tileSize, tileSize, tileSize),
-				MapEdge.NorthEast => new Rectangle(ox + MapDocument.WIDTH * tileSize, oy - tileSize, tileSize, tileSize),
-				MapEdge.SouthWest => new Rectangle(ox - tileSize, oy + MapDocument.HEIGHT * tileSize, tileSize, tileSize),
-				MapEdge.SouthEast => new Rectangle(ox + MapDocument.WIDTH * tileSize, oy + MapDocument.HEIGHT * tileSize, tileSize, tileSize),
+				MapEdge.NorthWest => new Rect(ox - tileSize, oy - tileSize, tileSize, tileSize),
+				MapEdge.NorthEast => new Rect(ox + MapDocument.WIDTH * tileSize, oy - tileSize, tileSize, tileSize),
+				MapEdge.SouthWest => new Rect(ox - tileSize, oy + MapDocument.HEIGHT * tileSize, tileSize, tileSize),
+				MapEdge.SouthEast => new Rect(ox + MapDocument.WIDTH * tileSize, oy + MapDocument.HEIGHT * tileSize, tileSize, tileSize),
 
-				_ => Rectangle.Empty
+				_ => null
 			};
 
-			if (!rect.IsEmpty)
-				g.FillRectangle(brush, rect);
+			if (rect != null)
+				context.DrawRectangle(brush, null, rect.Value);
 		}
 
-		protected override void OnMouseDown(MouseEventArgs e)
+		protected override void OnPointerPressed(PointerPressedEventArgs e)
 		{
-			// start a new press: clear per-press tracking and allow an edge-create once
+			base.OnPointerPressed(e);
+
 			_createMapsThisDrag.Clear();
 			_edgeCreateTriggered = false;
 
 			MapDocument?.BeginBatch();
-			base.OnMouseDown(e);
 
-			if (e.Button == MouseButtons.Left)
+			var point = e.GetCurrentPoint(this);
+
+			if (point.Properties.IsLeftButtonPressed)
 			{
 				_isPainting = true;
 				_isErasing = false;
-				PaintTileAtMouse(e.X, e.Y);
+				PaintTileAtMouse(point.Position, _isErasing);
 			}
-			else if (e.Button == MouseButtons.Right)
+			else if (point.Properties.IsRightButtonPressed)
 			{
 				_isPainting = true;
 				_isErasing = true;
-				PaintTileAtMouse(e.X, e.Y, erase: true);
+				PaintTileAtMouse(point.Position, _isErasing);
 			}
-			else if (e.Button == MouseButtons.Middle)
+			else if (point.Properties.IsMiddleButtonPressed)
 			{
 				_isPainting = false;
 				_isErasing = false;
-				GetTileFromMouse(e.X, e.Y, out int tileX, out int tileY);
+				GetTileFromMouse(point.Position, out int tileX, out int tileY);
 
 				if (State!.Tool == Tool.RoomBuilder)
 				{
@@ -318,6 +323,8 @@ namespace Glyphborn.Mapper.Controls
 				}
 				else
 				{
+					if (State.SelectedTile == null) return;
+
 					var sel = State?.SelectedTile!.Value;
 					var tile = new TileRef
 					{
@@ -330,54 +337,34 @@ namespace Glyphborn.Mapper.Controls
 			}
 		}
 
-		private void GetTileFromMouse(int mouseX, int mouseY, out int tileX, out int tileY)
+		protected override void OnPointerMoved(PointerEventArgs e)
 		{
-			if (MapDocument == null)
-			{
-				tileX = tileY = 0;
-				return;
-			}
-
-			int tileSize = ComputeTileSize();
-			int mapW = MapDocument.WIDTH * tileSize;
-			int mapH = MapDocument.HEIGHT * tileSize;
-			int ox = (ClientSize.Width - mapW) / 2;
-			int oy = (ClientSize.Height - mapH) / 2;
-
-			double fx = (mouseX - ox) / (double) tileSize;
-			double fy = (mouseY - oy) / (double) tileSize;
-
-			tileX = (int) Math.Floor(fx);
-			tileY = (int) Math.Floor(fy);
-		}
-
-		protected override void OnMouseMove(MouseEventArgs e)
-		{
-			base.OnMouseMove(e);
+			base.OnPointerMoved(e);
 
 			MapEdge edge = MapEdge.Inside;
 
+			var point = e.GetCurrentPoint(this);
+
 			if (MapDocument != null)
 			{
-				GetTileFromMouse(e.X, e.Y, out int tileX, out int tileY);
+				GetTileFromMouse(point.Position, out int tileX, out int tileY);
 				edge = ResolveEdge(tileX, tileY);
 			}
 
-			// Preserve lastEdge so we can detect transitions if needed elsewhere.
 			_hoverEdge = edge;
 
-			Invalidate();
+			InvalidateVisual();
 
 			if (_isPainting)
 			{
-				PaintTileAtMouse(e.X, e.Y, erase: _isErasing);
+				PaintTileAtMouse(point.Position, erase: _isErasing);
 			}
 		}
 
-		protected override void OnMouseUp(MouseEventArgs e)
+		protected override void OnPointerReleased(PointerReleasedEventArgs e)
 		{
 			MapDocument?.EndBatch();
-			base.OnMouseUp(e);
+			base.OnPointerReleased(e);
 
 			_isPainting = false;
 
@@ -385,24 +372,21 @@ namespace Glyphborn.Mapper.Controls
 			_edgeCreateTriggered = false;
 		}
 
-		private void PaintTileAtMouse(int mouseX, int mouseY, bool erase = false)
+		private void PaintTileAtMouse(Point position, bool erase)
 		{
-			if (MapDocument == null || State == null)
-				return;
+			if (MapDocument == null || State == null) return;
 
-			if (State.Tool == Tool.MapBuilder && State.SelectedTile == null)
-				return;
+			if (State.Tool == Tool.MapBuilder && State.SelectedTile == null) return;
 
-			GetTileFromMouse(mouseX, mouseY, out int tileX, out int tileY);
+			GetTileFromMouse(position, out int tileX, out int tileY);
 			PaintTile(tileX, tileY, erase);
 
-			Invalidate();
+			InvalidateVisual();
 		}
 
 		private void PaintTile(int tileX, int tileY, bool erase)
 		{
-			if (AreaDocument == null || State == null)
-				return;
+			if (AreaDocument == null || State == null) return;
 
 			int mapX = State.ActiveMapX;
 			int mapY = State.ActiveMapY;
@@ -415,32 +399,25 @@ namespace Glyphborn.Mapper.Controls
 			{
 				Redirect(edge, ref mapX, ref mapY, ref tileX, ref tileY);
 
-				long key = ((long) mapX << 32) | (uint) mapY;
+				long key = ((long)mapX << 32) | (uint)mapY;
 
-				// If map already exists, use it.
 				if (AreaDocument.HasMap(mapX, mapY))
 				{
 					newMap = AreaDocument.GetMap(mapX, mapY);
 				}
-				// Otherwise create it only once per press/session.
 				else if (!_createMapsThisDrag.Contains(key) && !_edgeCreateTriggered)
 				{
-					// Create once and mark that we've triggered an edge-create for this press.
 					newMap = AreaDocument.GetOrCreateMap(mapX, mapY);
 					_createMapsThisDrag.Add(key);
 					_edgeCreateTriggered = true;
 				}
 				else
 				{
-					// Either we've already created this map this press, or an edge-create already happened.
 					newMap = AreaDocument.GetMap(mapX, mapY);
 				}
 
-				// If we still don't have a map (should be rare), abort this tile.
 				if (newMap == null)
 					return;
-
-				// Don't change active MapDocument/State here; creation only.
 			}
 
 			var target = MapDocument!;
@@ -449,8 +426,7 @@ namespace Glyphborn.Mapper.Controls
 			else
 				target = MapDocument!;
 
-			if (target.IsGhost)
-				return;
+			if (target.IsGhost) return;
 
 			if (State.Tool == Tool.RoomBuilder)
 			{
@@ -460,9 +436,7 @@ namespace Glyphborn.Mapper.Controls
 			}
 
 			if (erase)
-			{
 				target.SetTile(State.CurrentLayer, tileX, tileY, default);
-			}
 			else
 			{
 				var sel = State.SelectedTile!.Value;
@@ -476,6 +450,30 @@ namespace Glyphborn.Mapper.Controls
 			}
 
 			target.IsDirty = true;
+		}
+
+		private void GetTileFromMouse(Point position, out int tileX, out int tileY)
+		{
+			if (MapDocument == null)
+			{
+				tileX = tileY = 0;
+				return;
+			}
+
+			int mouseX = (int)position.X;
+			int mouseY = (int)position.Y;
+
+			int tileSize = ComputeTileSize();
+			int mapW = MapDocument.WIDTH * tileSize;
+			int mapH = MapDocument.HEIGHT * tileSize;
+			int ox = (int)(Bounds.Width - mapW) / 2;
+			int oy = (int)(Bounds.Height - mapH) / 2;
+
+			double fx = (mouseX - ox) / (double)tileSize;
+			double fy = (mouseY - oy) / (double)tileSize;
+
+			tileX = (int)Math.Floor(fx);
+			tileY = (int)Math.Floor(fy);
 		}
 
 		static MapEdge ResolveEdge(int tileX, int tileY)

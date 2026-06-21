@@ -1,96 +1,95 @@
-﻿using System;
+﻿using Avalonia.Controls;
+using Avalonia.Media;
+using Damascus.Mapper.Theme;
 using System.Collections.Generic;
-using System.Drawing;
 using System.Linq;
-using System.Windows.Forms;
 
-namespace Glyphborn.Mapper.Dialogs
+namespace Damascus.Mapper.Dialogs
 {
-	public class ShortcutsDialog : Form
+	public class ShortcutsDialog : Window
 	{
-		private readonly ListView _list;
-
-		public ShortcutsDialog(MenuStrip menu)
+		public ShortcutsDialog(Menu menu)
 		{
-			Text = "Keyboard Shortcuts";
+			Title = "Keyboard Shortcuts";
 			Width = 420;
 			Height = 500;
-			StartPosition = FormStartPosition.CenterParent;
-			FormBorderStyle = FormBorderStyle.FixedDialog;
-			MaximizeBox = false;
-			MinimizeBox = false;
+			WindowStartupLocation = WindowStartupLocation.CenterOwner;
+			CanMaximize = false;
+			CanMinimize = false;
+			CanResize = false;
+			Background = MapperTheme.ContainerBackground;
+			Icon = MapperTheme.Icon;
 
-			_list = new ListView
+			var stack = new StackPanel()
 			{
-				Dock = DockStyle.Fill,
-				View = View.Details,
-				FullRowSelect = true,
-				GridLines = false,
-				HeaderStyle = ColumnHeaderStyle.Nonclickable
+				HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center
 			};
 
-			_list.Columns.Add("Command", 250);
-			_list.Columns.Add("Shortcut", 120);
+			// Column headers
+			AddRow(stack, "Command", "Shortcut", bold: true);
+			AddSeparator(stack);
 
-			Controls.Add(_list);
+			// Keyboard shortcuts walked from the live menu
+			foreach (var (path, gesture) in GetAllShortcuts(menu))
+				AddRow(stack, path, gesture.ToString());
 
-			LoadShortcuts(menu);
-		}
+			// Spacer
+			AddRow(stack, "", "");
 
-		private void LoadShortcuts(MenuStrip menu)
-		{
-			// Keyboard shortcuts
-			foreach (var (path, shortcut) in GetAllShortcuts(menu))
-			{
-				var item = new ListViewItem(path);
-				item.SubItems.Add(FormatShortcut(shortcut));
-				_list.Items.Add(item);
-			}
-
-			// Spacer row
-			_list.Items.Add(new ListViewItem(""));
-
-			// Mouse Controls header
-			var header = new ListViewItem("Mouse Controls");
-			header.Font = new Font(_list.Font, FontStyle.Bold);
-			_list.Items.Add(header);
+			// Mouse controls header
+			AddRow(stack, "Mouse Controls", "", bold: true);
+			AddSeparator(stack);
 
 			// Mouse controls
-			AddMouse("Left Click", "Paint tile / Select");
-			AddMouse("Right Click", "Erase tile");
-			AddMouse("Middle Click", "Bucket fill");
-			AddMouse("Scroll Wheel", "Scroll layers / tileset");
-			AddMouse("Left Drag", "Paint continuously");
-			AddMouse("Right Drag", "Erase continuously");
-			AddMouse("3D View", "Orbit / Pan / Zoom");
+			AddRow(stack, "Left Click", "Paint tile / Select");
+			AddRow(stack, "Right Click", "Erase tile");
+			AddRow(stack, "Middle Click", "Bucket fill");
+			AddRow(stack, "Scroll Wheel", "Scroll layers / tileset");
+			AddRow(stack, "Left Drag", "Paint continuously");
+			AddRow(stack, "Right Drag", "Erase continuously");
+			AddRow(stack, "3D View", "Orbit / Pan / Zoom");
+
+			Content = new ScrollViewer { Content = stack };
 		}
 
-		private void AddMouse(string action, string description)
+		private static void AddRow(StackPanel panel, string command, string shortcut, bool bold = false)
 		{
-			var item = new ListViewItem(action);
-			item.SubItems.Add(description);
-			_list.Items.Add(item);
+			var grid = new Grid { Margin = new Avalonia.Thickness(4, 2) };
+			grid.ColumnDefinitions.Add(new ColumnDefinition(200, GridUnitType.Pixel));
+			grid.ColumnDefinitions.Add(new ColumnDefinition(170, GridUnitType.Pixel));
+
+			var weight = bold ? FontWeight.Bold : FontWeight.Normal;
+
+			var col1 = new TextBlock { Text = command, FontWeight = weight };
+			var col2 = new TextBlock { Text = shortcut, FontWeight = weight };
+
+			Grid.SetColumn(col1, 0);
+			Grid.SetColumn(col2, 1);
+
+			grid.Children.Add(col1);
+			grid.Children.Add(col2);
+			panel.Children.Add(grid);
 		}
 
-		private static string FormatShortcut(Keys keys)
+		private static void AddSeparator(StackPanel panel)
 		{
-			return keys.ToString().Replace(", ", " + ");
+			panel.Children.Add(new Separator { Margin = new Avalonia.Thickness(0, 2) });
 		}
 
-		private static IEnumerable<(string Path, Keys Shortcut)> GetAllShortcuts(MenuStrip menu)
+		private static IEnumerable<(string Path, Avalonia.Input.KeyGesture Gesture)> GetAllShortcuts(Menu menu)
 		{
-			foreach (ToolStripMenuItem item in menu.Items)
-				foreach (var entry in Walk(item, item.Text))
+			foreach (var item in menu.Items.OfType<MenuItem>())
+				foreach (var entry in Walk(item, item.Header?.ToString() ?? ""))
 					yield return entry;
 		}
 
-		private static IEnumerable<(string Path, Keys Shortcut)> Walk(ToolStripMenuItem item, string path)
+		private static IEnumerable<(string Path, Avalonia.Input.KeyGesture Gesture)> Walk(MenuItem item, string path)
 		{
-			if (item.ShortcutKeys != Keys.None)
-				yield return (path, item.ShortcutKeys);
+			if (item.HotKey != null)
+				yield return (path, item.HotKey);
 
-			foreach (var child in item.DropDownItems.OfType<ToolStripMenuItem>())
-				foreach (var entry in Walk(child, $"{path} → {child.Text}"))
+			foreach (var child in item.Items.OfType<MenuItem>())
+				foreach (var entry in Walk(child, $"{path} → {child.Header}"))
 					yield return entry;
 		}
 	}

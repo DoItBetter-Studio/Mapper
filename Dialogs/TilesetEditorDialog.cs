@@ -1,35 +1,51 @@
-﻿using Glyphborn.Mapper.Editor;
+﻿using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
+using Avalonia.Platform.Storage;
+using Damascus.Mapper.Theme;
+using Glyphborn.Mapper.Editor;
 using Glyphborn.Mapper.Maths;
 using Glyphborn.Mapper.Tiles;
 using System;
-using System.Drawing;
-using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Windows.Forms;
+using System.Threading.Tasks;
 
 namespace Glyphborn.Mapper
 {
-	public partial class TilesetEditorDialog : Form
+	// Avalonia port of the WinForms TilesetEditorDialog.
+	// Visual language (pens/brushes/glyphs) is copied 1:1 from Damascus.Mapper.Controls.TilesetControl
+	// so the grid here looks identical to the read-only tileset picker elsewhere in the app.
+	//
+	// Usage from a caller (replaces WinForms' `using var dlg = ...; dlg.ShowDialog()`):
+	//     var dlg = new TilesetEditorDialog(tileset);
+	//     bool? saved = await dlg.ShowDialog<bool?>(ownerWindow);
+	public sealed class TilesetEditorDialog : Window
 	{
 		// ── data ──────────────────────────────────────────────────────────────
 		private readonly Tileset _tileset;
 		private readonly string? _tilesetPath;
 		private bool _isDirty;
 		private bool _ignoreChanges;
+		private bool _savedSuccessfully;
+		private bool _forceClose;
 
 		// ── grid state ────────────────────────────────────────────────────────
-		private Panel? _gridCanvas;
+		private TileGridCanvas? _gridCanvas;
 		private int _selectedSlot = -1;
-		private int _hoverSlot = -1;
 
 		private const int CellSize = 32;
 		private const int CellPadding = 2;
 		private const int Columns = 8;
-
-		private int CanvasWidth => Columns * CellSize;
+		private const int PropsRowWidth = 600; // fixed content width used to right-align import buttons
 
 		private int TotalSlots
 		{
@@ -39,27 +55,24 @@ namespace Glyphborn.Mapper
 				foreach (var t in _tileset.Tiles)
 					if (t.Id > maxId) maxId = t.Id;
 
-				int total = Math.Max(256, maxId + 1);
+				int total = Math.Max(_tileset.Tiles.Count, maxId + 32);
 				int rows = (int)Math.Ceiling(total / (float)Columns);
 				return rows * Columns;
 			}
 		}
 
 		// ── properties panel controls ─────────────────────────────────────────
-		private Label? _slotLabel;
+		private TextBlock? _slotLabel;
 		private TextBox? _nameTextBox;
 		private ComboBox? _collisionBox;
-		private Label? _meshLabel;
-		private Button? _importMeshButton;
-		private Label? _textureLabel;
-		private Button? _importTextureButton;
-		private PictureBox? _previewBox;
+		private Border? _previewBorder;
+		private Image? _previewImage;
 		private Button? _clearSlotButton;
 
-		// ── Variant sub-panel controls ────────────────────────────────────────
-		private Panel? _variantPanel;
-		private Label? _previewLabel; // Track this so we can move it
-		private int _sharedBottomY;   // Remembers where the common controls end
+		// ── variant sub-panel controls ────────────────────────────────────────
+		private Canvas? _variantPanel;
+		private TextBlock? _previewLabel;
+		private int _sharedBottomY;
 
 		// =====================================================================
 		//  Construction
@@ -70,13 +83,15 @@ namespace Glyphborn.Mapper
 			_tileset = tileset;
 			_tilesetPath = null;
 
-			Text = $"Edit Tileset: {tileset.Name}";
-			Size = new Size(940, 660);
-			MinimumSize = new Size(680, 480);
-			FormBorderStyle = FormBorderStyle.Sizable;
-			StartPosition = FormStartPosition.CenterParent;
-			BackColor = Color.FromArgb(25, 25, 28);
-			ForeColor = Color.White;
+			Title = $"Edit Tileset: {tileset.Name}";
+			Width = 940;
+			Height = 660;
+			MinWidth = 680;
+			MinHeight = 480;
+			CanResize = true;
+			WindowStartupLocation = WindowStartupLocation.CenterOwner;
+			Background = new SolidColorBrush(Color.FromRgb(25, 25, 28));
+			Icon = MapperTheme.Icon;
 
 			EnsureAirTile();
 			BuildUI();
@@ -100,28 +115,45 @@ namespace Glyphborn.Mapper
 			}
 		}
 
-		protected override void OnFormClosing(FormClosingEventArgs e)
+		protected override void OnClosing(WindowClosingEventArgs e)
 		{
-			base.OnFormClosing(e);
-			if (_isDirty && DialogResult != DialogResult.OK)
+			base.OnClosing(e);
+
+			if (_forceClose)
 			{
-				var r = MessageBox.Show(
-					"You have unsaved changes. Discard them?",
-					"Unsaved Changes",
-					MessageBoxButtons.YesNo,
-					MessageBoxIcon.Warning);
-				if (r == DialogResult.No)
-				{
-					e.Cancel = true;
-					return;
-				}
+				DisposePreview();
+				return;
 			}
 
-			// FIX: Prevent residual GDI+ handle leakage when closing down the window
-			if (!e.Cancel && _previewBox?.Image != null)
+			if (_isDirty && !_savedSuccessfully)
 			{
-				_previewBox.Image.Dispose();
-				_previewBox.Image = null;
+				e.Cancel = true;
+				_ = ConfirmDiscardAndCloseAsync();
+				return;
+			}
+
+			DisposePreview();
+		}
+
+		private async Task ConfirmDiscardAndCloseAsync()
+		{
+			bool discard = await ConfirmAsync(
+				"Unsaved Changes",
+				"You have unsaved changes. Discard them?");
+
+			if (discard)
+			{
+				_forceClose = true;
+				Close(false);
+			}
+		}
+
+		private void DisposePreview()
+		{
+			if (_previewImage?.Source is IDisposable bmp)
+			{
+				bmp.Dispose();
+				_previewImage.Source = null;
 			}
 		}
 
@@ -131,106 +163,103 @@ namespace Glyphborn.Mapper
 
 		private void BuildUI()
 		{
-			var mainLayout = new TableLayoutPanel
+			var root = new DockPanel();
+
+			var bottomBar = BuildBottomBar();
+			DockPanel.SetDock(bottomBar, Dock.Bottom);
+			root.Children.Add(bottomBar);
+
+			var mainGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("280,*") };
+
+			var gridPanel = BuildGridPanel();
+			Grid.SetColumn(gridPanel, 0);
+
+			var propsPanel = BuildPropertiesPanel();
+			Grid.SetColumn(propsPanel, 1);
+
+			mainGrid.Children.Add(gridPanel);
+			mainGrid.Children.Add(propsPanel);
+
+			root.Children.Add(mainGrid); // last (un-docked) child fills
+
+			Content = root;
+		}
+
+		private Canvas BuildBottomBar()
+		{
+			var bar = new Canvas
 			{
-				Dock = DockStyle.Fill,
-				ColumnCount = 2,
-				RowCount = 1,
-				Padding = new Padding(0)
-			};
-
-			mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 280));  // grid
-			mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); // properties
-
-			mainLayout.Controls.Add(BuildGridPanel(), 0, 0);
-			mainLayout.Controls.Add(BuildPropertiesPanel(), 1, 0);
-
-			var bottomBar = new Panel
-			{
-				Dock = DockStyle.Bottom,
 				Height = 52,
-				BackColor = Color.FromArgb(30, 30, 36)
+				Background = new SolidColorBrush(Color.FromRgb(30, 30, 36))
 			};
 
 			var saveBtn = MakeButton("Save Tileset", 120);
 			var cancelBtn = MakeButton("Cancel", 90);
-			cancelBtn.DialogResult = DialogResult.Cancel;
 			saveBtn.Click += SaveTileset_Click;
+			cancelBtn.Click += (_, __) => Close(false);
 
-			void PositionBottomButtons()
+			bar.Children.Add(saveBtn);
+			bar.Children.Add(cancelBtn);
+
+			void PositionButtons()
 			{
-				cancelBtn.Location = new Point(bottomBar.Width - cancelBtn.Width - 12, 12);
-				saveBtn.Location = new Point(cancelBtn.Left - saveBtn.Width - 8, 12);
+				var w = bar.Bounds.Width > 0 ? bar.Bounds.Width : Width;
+				Canvas.SetTop(cancelBtn, 12);
+				Canvas.SetLeft(cancelBtn, w - cancelBtn.Width - 12);
+				Canvas.SetTop(saveBtn, 12);
+				Canvas.SetLeft(saveBtn, w - cancelBtn.Width - 12 - saveBtn.Width - 8);
 			}
 
-			bottomBar.Controls.Add(saveBtn);
-			bottomBar.Controls.Add(cancelBtn);
-			bottomBar.Resize += (_, __) => PositionBottomButtons();
-			Shown += (_, __) => PositionBottomButtons();
+			bar.SizeChanged += (_, __) => PositionButtons();
+			Opened += (_, __) => PositionButtons();
 
-			Controls.Add(mainLayout);
-			Controls.Add(bottomBar);
+			return bar;
 		}
 
 		// =====================================================================
 		//  Grid panel (left)
 		// =====================================================================
 
-		private sealed class BufferedPanel : Panel
+		private Control BuildGridPanel()
 		{
-			public BufferedPanel() { DoubleBuffered = true; }
-		}
-
-		private Panel BuildGridPanel()
-		{
-			var outer = new Panel
+			var outer = new DockPanel
 			{
-				Dock = DockStyle.Fill,
-				BackColor = Color.FromArgb(28, 28, 32)
+				Background = new SolidColorBrush(Color.FromRgb(28, 28, 32))
 			};
 
-			var scroll = new Panel
+			var header = new Border
 			{
-				Dock = DockStyle.Fill,
-				AutoScroll = true,
-				BackColor = Color.FromArgb(28, 28, 32)
-			};
-
-			_gridCanvas = new BufferedPanel
-			{
-				BackColor = Color.FromArgb(28, 28, 32),
-				Cursor = Cursors.Hand,
-				Width = CanvasWidth,
-				Height = GetCanvasHeight()
-			};
-
-			_gridCanvas.Paint += GridCanvas_Paint;
-			_gridCanvas.MouseDown += GridCanvas_MouseDown;
-			_gridCanvas.MouseMove += GridCanvas_MouseMove;
-			_gridCanvas.MouseLeave += (_, __) => { _hoverSlot = -1; _gridCanvas?.Invalidate(); };
-
-			var ctxMenu = new ContextMenuStrip
-			{
-				BackColor = Color.FromArgb(40, 40, 50),
-				ForeColor = Color.White
-			};
-			ctxMenu.Opening += GridContextMenu_Opening;
-			_gridCanvas.ContextMenuStrip = ctxMenu;
-
-			scroll.Controls.Add(_gridCanvas);
-			outer.Controls.Add(scroll);
-
-			outer.Controls.Add(new Label
-			{
-				Text = "Tiles",
-				Dock = DockStyle.Top,
 				Height = 32,
-				TextAlign = ContentAlignment.MiddleLeft,
-				Padding = new Padding(10, 0, 0, 0),
-				Font = new Font("Segoe UI", 10f, FontStyle.Bold),
-				ForeColor = Color.White,
-				BackColor = Color.FromArgb(38, 38, 46)
-			});
+				Background = MapperTheme.HeaderBackground,
+				Padding = new Thickness(10, 0, 0, 0),
+				Child = new TextBlock
+				{
+					Text = "Tiles",
+					VerticalAlignment = VerticalAlignment.Center,
+					FontWeight = FontWeight.Bold,
+					Foreground = Brushes.White
+				}
+			};
+			DockPanel.SetDock(header, Dock.Top);
+			outer.Children.Add(header);
+
+			_gridCanvas = new TileGridCanvas(this)
+			{
+				Width = Columns * CellSize,
+				Height = GetCanvasHeight(),
+				HorizontalAlignment = HorizontalAlignment.Left,
+				VerticalAlignment = VerticalAlignment.Top
+			};
+
+			var scroll = new ScrollViewer
+			{
+				Content = _gridCanvas,
+				HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+				VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+				Background = MapperTheme.ContainerBackground,
+				Padding = new Thickness(6, 0, 0, 0)
+			};
+			outer.Children.Add(scroll); // fills remaining space
 
 			return outer;
 		}
@@ -241,197 +270,190 @@ namespace Glyphborn.Mapper
 		{
 			if (_gridCanvas == null) return;
 			_gridCanvas.Height = GetCanvasHeight();
-			_gridCanvas.Invalidate();
+			_gridCanvas.InvalidateVisual();
 		}
 
-		// ── painting ──────────────────────────────────────────────────────────
+		// ── the grid control itself ──────────────────────────────────────────
 
-		private void GridCanvas_Paint(object? sender, PaintEventArgs e)
+		private sealed class TileGridCanvas : Control
 		{
-			var g = e.Graphics;
-			int total = TotalSlots;
+			private readonly TilesetEditorDialog _owner;
+			private int _hoverSlot = -1;
 
-			using var selectedPen = new Pen(Color.FromArgb(14, 116, 202), 2);
-			using var emptyPen = new Pen(Color.FromArgb(55, 55, 58), 1) { DashStyle = DashStyle.Dash };
-			using var borderPen = new Pen(Color.FromArgb(45, 45, 48), 1);
-			using var indexBrush = new SolidBrush(Color.FromArgb(120, 120, 135));
-			using var nameBrush = new SolidBrush(Color.LightGray);
-			using var plusBrush = new SolidBrush(Color.FromArgb(110, 110, 115));
-			using var indexFont = new Font("Segoe UI", 6.5f);
-			using var nameFont = new Font("Segoe UI", 7f);
+			// Styling copied from Damascus.Mapper.Controls.TilesetControl to keep the same esthetic.
+			private static readonly IPen SelectedPen = new Pen(Brush.Parse("#0E74CA"), 2);
+			private static readonly IPen EmptyPen = new Pen(Brush.Parse("#37373A"), 1, dashStyle: DashStyle.DashDot);
+			private static readonly IPen BorderPen = new Pen(Brushes.DimGray);
+			private static readonly Typeface TileTypeface = new Typeface("Segoe UI", FontStyle.Normal, FontWeight.Normal);
 
-			for (int i = 0; i < total; i++)
+			private static readonly FormattedText PlusGlyph = new FormattedText("+", System.Globalization.CultureInfo.CurrentCulture,
+				FlowDirection.LeftToRight, Typeface.Default, 10, Brushes.LightGray);
+
+			public TileGridCanvas(TilesetEditorDialog owner)
 			{
-				int col = i % Columns;
-				int row = i / Columns;
+				_owner = owner;
+				Cursor = new Cursor(StandardCursorType.Hand);
+			}
 
-				var slotRect = new Rectangle(col * CellSize, row * CellSize, CellSize, CellSize);
+			protected override void OnPointerPressed(PointerPressedEventArgs e)
+			{
+				base.OnPointerPressed(e);
 
-				var drawRect = new Rectangle(
-					slotRect.X + CellPadding,
-					slotRect.Y + CellPadding,
-					slotRect.Width - CellPadding * 2,
-					slotRect.Height - CellPadding * 2);
+				var point = e.GetCurrentPoint(this);
+				int slot = SlotAt(point.Position);
+				if (slot < 0) return;
 
-				TileDefinition? tile = i < _tileset.Tiles.Count ? _tileset.Tiles[i] : null;
-				RenderPrimitive? visual = tile?.GetPrimitives().FirstOrDefault();
-
-				bool isEmpty = IsEmptySlot(i);
-				bool isAir = i == 0;
-
-				if (!isEmpty && tile != null)
+				if (point.Properties.PointerUpdateKind == PointerUpdateKind.RightButtonPressed)
 				{
-					if (i == _hoverSlot && i != _selectedSlot)
-					{
-						using var hoverBrush = new SolidBrush(Color.FromArgb(30, 255, 255, 255));
-						g.FillRectangle(hoverBrush, drawRect);
-					}
+					ShowSlotMenu(slot);
+					return;
+				}
 
-					if (isAir || tile.TileType == TileType.None)
-					{
-						using var hatch = new HatchBrush(HatchStyle.DiagonalCross,
-							Color.FromArgb(50, 50, 65), Color.FromArgb(30, 30, 40));
-						g.FillRectangle(hatch, drawRect);
-					}
-					else if (visual?.Texture != null)
-					{
-						try
-						{
-							// FIX: Wrapped in a using statement to destroy unmanaged Bitmap instances on every frame paint
-							using var thumb = TextureToBitmap(visual.Texture);
-							g.DrawImage(thumb, drawRect);
-						}
-						catch { g.FillRectangle(Brushes.DimGray, drawRect); }
-					}
-					else
-					{
-						g.FillRectangle(Brushes.Black, drawRect);
-						using var xPen = new Pen(Color.FromArgb(180, 50, 50), 1.5f);
-						g.DrawLine(xPen, drawRect.Left + 3, drawRect.Top + 3, drawRect.Right - 3, drawRect.Bottom - 3);
-						g.DrawLine(xPen, drawRect.Right - 3, drawRect.Top + 3, drawRect.Left + 3, drawRect.Bottom - 3);
-					}
+				if (!_owner.IsEmptySlot(slot))
+					_owner.SelectSlot(slot);
+			}
 
-					g.DrawRectangle(borderPen, drawRect);
+			protected override void OnPointerMoved(PointerEventArgs e)
+			{
+				base.OnPointerMoved(e);
+				int slot = SlotAt(e.GetCurrentPoint(this).Position);
+				if (slot == _hoverSlot) return;
+				_hoverSlot = slot;
+				InvalidateVisual();
+			}
 
-					if (!isAir && tile.TileType != TileType.None && !string.IsNullOrEmpty(tile.Name))
-					{
-						var nameRect = new RectangleF(drawRect.X + 2, drawRect.Bottom - 13, drawRect.Width - 4, 12);
-						var fmt = new StringFormat { Trimming = StringTrimming.EllipsisCharacter };
-						g.DrawString(tile.Name, indexFont, nameBrush, nameRect, fmt);
-					}
+			protected override void OnPointerExited(PointerEventArgs e)
+			{
+				base.OnPointerExited(e);
+				_hoverSlot = -1;
+				InvalidateVisual();
+			}
+
+			private int SlotAt(Point p)
+			{
+				int col = (int)(p.X / CellSize);
+				int row = (int)(p.Y / CellSize);
+				if (col < 0 || col >= Columns || row < 0) return -1;
+				int slot = row * Columns + col;
+				return slot < _owner.TotalSlots ? slot : -1;
+			}
+
+			private void ShowSlotMenu(int slot)
+			{
+				string tileName = "";
+				if (slot < _owner._tileset.Tiles.Count)
+				{
+					var t = _owner._tileset.Tiles[slot];
+					if (!string.IsNullOrEmpty(t.Name)) tileName = t.Name;
+				}
+
+				string header = slot == 0
+					? "Slot 0 — Air (reserved)"
+					: $"Slot {slot}  —  {tileName}";
+
+				var menu = new ContextMenu();
+				menu.Items.Add(new MenuItem { Header = header, IsEnabled = false });
+				menu.Items.Add(new Separator());
+
+				if (_owner.IsEmptySlot(slot))
+				{
+					menu.Items.Add(MakeMenuItem("Create Generic Tile", () => _owner.CreateTileAtSlot(slot, TileType.TileGeneric)));
+					menu.Items.Add(MakeMenuItem("Create Animated Tile", () => _owner.CreateTileAtSlot(slot, TileType.TileAnimated)));
+					menu.Items.Add(MakeMenuItem("Create Door Tile", () => _owner.CreateTileAtSlot(slot, TileType.TileEntityDoor)));
+					menu.Items.Add(MakeMenuItem("Create Crop Tile", () => _owner.CreateTileAtSlot(slot, TileType.TileEntityCrop)));
 				}
 				else
 				{
-					// FIX: Restored unallocated palette block view styling instead of the erroneous red X copy-paste error
-					g.DrawRectangle(emptyPen, drawRect);
+					menu.Items.Add(MakeMenuItem("Select", () => _owner.SelectSlot(slot)));
 
-					int cx = drawRect.X + (drawRect.Width / 2);
-					int cy = drawRect.Y + (drawRect.Height / 2);
-					g.DrawString("+", nameFont, plusBrush, cx - 4, cy - 6);
+					if (slot != 0)
+						menu.Items.Add(MakeMenuItem("Clear Slot", () => _owner.ConfirmClearSlotAsync(slot), Color.FromRgb(250, 128, 114)));
 				}
 
-				g.DrawString(i.ToString(), indexFont, indexBrush, drawRect.X + 2, drawRect.Y + 2);
+				menu.Open(this);
+			}
 
-				if (i == _selectedSlot)
+			private static MenuItem MakeMenuItem(string text, Action onClick, Color? foreground = null)
+			{
+				var mi = new MenuItem { Header = text };
+				if (foreground.HasValue) mi.Foreground = new SolidColorBrush(foreground.Value);
+				mi.Click += (_, __) => onClick();
+				return mi;
+			}
+
+			public override void Render(DrawingContext context)
+			{
+				base.Render(context);
+
+				int total = _owner.TotalSlots;
+
+				for (int i = 0; i < total; i++)
 				{
-					g.DrawRectangle(selectedPen,
-						drawRect.X - 1, drawRect.Y - 1,
-						drawRect.Width + 2, drawRect.Height + 2);
+					int col = i % Columns;
+					int row = i / Columns;
+
+					var slotRect = new Rect((col * CellSize), row * CellSize, CellSize, CellSize);
+					var drawRect = slotRect.Deflate(CellPadding);
+
+					TileDefinition? tile = i < _owner._tileset.Tiles.Count ? _owner._tileset.Tiles[i] : null;
+					bool isEmpty = _owner.IsEmptySlot(i);
+
+					if (!isEmpty && tile != null)
+					{
+						if (i == _hoverSlot && i != _owner._selectedSlot)
+							context.FillRectangle(new SolidColorBrush(Colors.White, 0.12), drawRect);
+
+						if (i == 0 || tile.TileType == TileType.None)
+						{
+							context.FillRectangle(MapperTheme.ContainerBackground, drawRect);
+						}
+						else
+						{
+							var primitive = tile.GetPrimitives().FirstOrDefault();
+							if (primitive?.Texture != null)
+							{
+								var thumb = TextureToBitmap(primitive.Texture);
+								context.DrawImage(thumb, drawRect);
+							}
+						}
+
+						context.DrawRectangle(null, BorderPen, drawRect);
+
+						if (!string.IsNullOrEmpty(tile.Name))
+						{
+							var text = new FormattedText(
+								tile.Name,
+								System.Globalization.CultureInfo.CurrentCulture,
+								FlowDirection.LeftToRight,
+								TileTypeface,
+								9.0,
+								Brushes.LightGray)
+							{
+								MaxTextWidth = drawRect.Width - 4,
+								Trimming = TextTrimming.CharacterEllipsis
+							};
+							context.DrawText(text, new Point(drawRect.X + 2, drawRect.Bottom - 12));
+						}
+					}
+					else
+					{
+						context.DrawRectangle(MapperTheme.ContainerBackground, EmptyPen, drawRect);
+
+						var centerX = drawRect.X + (drawRect.Width / 2);
+						var centerY = drawRect.Y + (drawRect.Height / 2);
+						context.DrawText(PlusGlyph, new Point(centerX + 4, centerY));
+					}
+
+					var index = new FormattedText(i.ToString(), System.Globalization.CultureInfo.CurrentCulture,
+						FlowDirection.LeftToRight, Typeface.Default, 10, Brushes.LightGray);
+					context.DrawText(index, new Point(drawRect.X + 2, drawRect.Y + 2));
+
+					if (i == _owner._selectedSlot)
+					{
+						context.DrawRectangle(null, SelectedPen, drawRect.Inflate(1));
+					}
 				}
 			}
-		}
-
-		// ── mouse ─────────────────────────────────────────────────────────────
-
-		private void GridCanvas_MouseMove(object? sender, MouseEventArgs e)
-		{
-			int slot = SlotAt(e.X, e.Y);
-			if (slot == _hoverSlot) return;
-			_hoverSlot = slot;
-			_gridCanvas!.Invalidate();
-		}
-
-		private void GridCanvas_MouseDown(object? sender, MouseEventArgs e)
-		{
-			if (e.Button != MouseButtons.Left) return;
-			int slot = SlotAt(e.X, e.Y);
-			if (slot < 0) return;
-
-			if (!IsEmptySlot(slot))
-			{
-				SelectSlot(slot);
-			}
-		}
-
-		private void GridContextMenu_Opening(object? sender, System.ComponentModel.CancelEventArgs e)
-		{
-			var ctx = (ContextMenuStrip)sender!;
-			ctx.Items.Clear();
-
-			var pos = _gridCanvas!.PointToClient(Cursor.Position);
-			int slot = SlotAt(pos.X, pos.Y);
-			if (slot < 0) { e.Cancel = true; return; }
-
-			// Safe name resolution: if out of list bounds, it's inherently empty
-			string tileName = "";
-			if (slot < _tileset.Tiles.Count)
-			{
-				var t = _tileset.Tiles[slot];
-				if (!string.IsNullOrEmpty(t.Name))
-				{
-					tileName = t.Name;
-				}
-			}
-
-			string header = slot == 0
-				? "Slot 0 — Air (reserved)"
-				: $"Slot {slot}  —  {tileName}";
-
-			ctx.Items.Add(new ToolStripMenuItem(header) { Enabled = false });
-			ctx.Items.Add(new ToolStripSeparator());
-
-			if (IsEmptySlot(slot))
-			{
-				var genericTile = new ToolStripMenuItem("Create Generic Tile");
-				genericTile.Click += (_, __) => CreateTileAtSlot(slot, TileType.TileGeneric);
-				ctx.Items.Add(genericTile);
-
-				var animatedTile = new ToolStripMenuItem("Create Animated Tile");
-				animatedTile.Click += (_, __) => CreateTileAtSlot(slot, TileType.TileAnimated);
-				ctx.Items.Add(animatedTile);
-
-				var doorTile = new ToolStripMenuItem("Create Door Tile");
-				doorTile.Click += (_, __) => CreateTileAtSlot(slot, TileType.TileEntityDoor);
-				ctx.Items.Add(doorTile);
-
-				var cropTile = new ToolStripMenuItem("Create Crop Tile");
-				cropTile.Click += (_, __) => CreateTileAtSlot(slot, TileType.TileEntityCrop);
-				ctx.Items.Add(cropTile);
-
-			}
-			else
-			{
-
-				var selectItem = new ToolStripMenuItem("Select");
-				selectItem.Click += (_, __) => SelectSlot(slot);
-				ctx.Items.Add(selectItem);
-
-				if (slot != 0)
-				{
-					var clearItem = new ToolStripMenuItem("Clear Slot") { ForeColor = Color.Salmon };
-					clearItem.Click += (_, __) => ConfirmClearSlot(slot);
-					ctx.Items.Add(clearItem);
-				}
-			}
-		}
-
-		private int SlotAt(int mx, int my)
-		{
-			int col = mx / CellSize;
-			int row = my / CellSize;
-			if (col < 0 || col >= Columns || row < 0) return -1;
-			int slot = row * Columns + col;
-			return slot < TotalSlots ? slot : -1;
 		}
 
 		// ── slot operations ───────────────────────────────────────────────────
@@ -439,7 +461,7 @@ namespace Glyphborn.Mapper
 		private void SelectSlot(int slot)
 		{
 			_selectedSlot = slot;
-			_gridCanvas!.Invalidate();
+			_gridCanvas?.InvalidateVisual();
 			LoadTileProperties(_tileset.Tiles[slot]);
 		}
 
@@ -461,7 +483,7 @@ namespace Glyphborn.Mapper
 			tile.Name = $"Tile {slot}";
 			tile.Collision = CollisionType.None;
 
-			_tileset.Tiles.Add( tile );
+			_tileset.Tiles.Add(tile);
 
 			_selectedSlot = slot;
 			RefreshCanvasHeight();
@@ -469,21 +491,17 @@ namespace Glyphborn.Mapper
 			MarkDirty();
 		}
 
-		private void ConfirmClearSlot(int slot)
+		private async void ConfirmClearSlotAsync(int slot)
 		{
 			if (slot <= 0 || slot >= _tileset.Tiles.Count) return;
 
-			var r = MessageBox.Show(
-				$"Clear slot {slot} '{_tileset.Tiles[slot].Name}'?\n\n" +
-				"The slot index will be preserved; its mesh and texture data will be removed.",
+			bool confirmed = await ConfirmAsync(
 				"Clear Slot",
-				MessageBoxButtons.YesNo,
-				MessageBoxIcon.Warning);
+				$"Clear slot {slot} '{_tileset.Tiles[slot].Name}'?\n\n" +
+				"The slot index will be preserved; its mesh and texture data will be removed.");
 
-			if (r != DialogResult.Yes) return;
+			if (!confirmed) return;
 
-			// FIX 1: Overwrite the subclass instance with a raw base definition.
-			// This resets its internal TileType back to TileType.None so IsEmptySlot() reads it correctly.
 			_tileset.Tiles[slot] = new TileDefinition
 			{
 				Id = (ushort)slot,
@@ -491,16 +509,11 @@ namespace Glyphborn.Mapper
 				Collision = CollisionType.None
 			};
 
-			// FIX 2: Cascade truncation loop.
-			// Continually pop elements from the back of the list if they match our empty criteria,
-			// but stop completely before hitting index 0 (the reserved Air tile).
 			while (_tileset.Tiles.Count > 1 && IsEmptySlot(_tileset.Tiles.Count - 1))
 			{
 				_tileset.Tiles.RemoveAt(_tileset.Tiles.Count - 1);
 			}
 
-			// FIX 3: Out-of-bounds safety check for selection.
-			// If the current selection was part of the truncated tail, drop focus immediately.
 			if (_selectedSlot >= _tileset.Tiles.Count || _selectedSlot == slot)
 			{
 				_selectedSlot = -1;
@@ -537,175 +550,146 @@ namespace Glyphborn.Mapper
 		//  Properties panel (right)
 		// =====================================================================
 
-		private Panel BuildPropertiesPanel()
+		private Control BuildPropertiesPanel()
 		{
-			var panel = new Panel
-			{
-				Dock = DockStyle.Fill,
-				BackColor = Color.FromArgb(40, 40, 50),
-				AutoScroll = true
-			};
+			var canvas = new Canvas { Background = new SolidColorBrush(Color.FromRgb(40, 40, 50)) };
 
 			int y = 12;
 
-			panel.Controls.Add(new Label
+			Place(canvas, new TextBlock
 			{
 				Text = "Tile Properties",
-				Location = new Point(12, y),
-				Size = new Size(370, 26),
-				Font = new Font("Segoe UI", 11f, FontStyle.Bold),
-				ForeColor = Color.White
-			});
+				FontSize = 14,
+				FontWeight = FontWeight.Bold,
+				Foreground = Brushes.White
+			}, 12, y, 370, 26);
 			y += 34;
 
-			_slotLabel = new Label
-			{
-				Text = "No tile selected",
-				Location = new Point(12, y),
-				Size = new Size(370, 20),
-				ForeColor = Color.FromArgb(120, 120, 145)
-			};
-			panel.Controls.Add(_slotLabel);
+			_slotLabel = new TextBlock { Text = "No tile selected", Foreground = new SolidColorBrush(Color.FromRgb(120, 120, 145)) };
+			Place(canvas, _slotLabel, 12, y, 370, 20);
 			y += 28;
 
-			panel.Controls.Add(HRule(y)); y += 14;
+			Place(canvas, HRule(), 12, y);
+			y += 14;
 
-			panel.Controls.Add(PropLabel("Name:", new Point(12, y)));
-			_nameTextBox = new TextBox
-			{
-				Location = new Point(100, y - 2),
-				Width = 270,
-				Enabled = false,
-				Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top
-			};
-			_nameTextBox.TextChanged += PropertyChanged;
-			panel.Controls.Add(_nameTextBox);
+			Place(canvas, PropLabel("Name:"), 12, y);
+			_nameTextBox = new TextBox { Width = 270, IsEnabled = false };
+			_nameTextBox.TextChanged += (_, __) => PropertyChanged();
+			Place(canvas, _nameTextBox, 100, y - 2);
 			y += 34;
 
-			panel.Controls.Add(PropLabel("Collision:", new Point(12, y)));
+			Place(canvas, PropLabel("Collision:"), 12, y);
 			_collisionBox = new ComboBox
 			{
-				Location = new Point(100, y - 2),
 				Width = 270,
-				DataSource = Enum.GetValues(typeof(CollisionType)),
-				DropDownStyle = ComboBoxStyle.DropDownList,
-				Enabled = false,
-				Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top
+				ItemsSource = Enum.GetValues(typeof(CollisionType)),
+				IsEnabled = false
 			};
-			_collisionBox.SelectedIndexChanged += PropertyChanged;
-			panel.Controls.Add(_collisionBox);
+			_collisionBox.SelectionChanged += (_, __) => PropertyChanged();
+			Place(canvas, _collisionBox, 100, y - 2);
 			y += 42;
 
-			panel.Controls.Add(HRule(y)); y += 14;
+			Place(canvas, HRule(), 12, y);
+			y += 14;
 
 			// ── THE ACCORDION ZONE STARTS RIGHT HERE NOW ──
-			_variantPanel = new Panel
-			{
-				Location = new Point(0, y),
-				Width = panel.Width,
-				Height = 0,
-				Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top
-			};
-			panel.Controls.Add(_variantPanel);
+			_variantPanel = new Canvas { Height = 0 };
+			Place(canvas, _variantPanel, 0, y);
 
 			_sharedBottomY = y;
 
-			_previewLabel = PropLabel("Preview:", new Point(12, y));
-			panel.Controls.Add(_previewLabel);
+			_previewLabel = PropLabel("Preview:");
+			Place(canvas, _previewLabel, 12, y);
 			y += 22;
 
-			_previewBox = new PictureBox
+			_previewImage = new Image { Stretch = Stretch.Uniform };
+			_previewBorder = new Border
 			{
-				Location = new Point(12, y),
-				Size = new Size(128, 128),
-				BorderStyle = BorderStyle.FixedSingle,
-				BackColor = Color.FromArgb(28, 28, 36),
-				SizeMode = PictureBoxSizeMode.Zoom
+				Width = 128,
+				Height = 128,
+				BorderBrush = Brushes.Gray,
+				BorderThickness = new Thickness(1),
+				Background = new SolidColorBrush(Color.FromRgb(28, 28, 36)),
+				Child = _previewImage
 			};
-			panel.Controls.Add(_previewBox);
+			Place(canvas, _previewBorder, 12, y);
 			y += 144;
 
 			_clearSlotButton = new Button
 			{
-				Text = "Clear Slot",
-				Location = new Point(12, y),
-				Size = new Size(115, 30),
-				BackColor = Color.FromArgb(150, 38, 38),
-				ForeColor = Color.White,
-				FlatStyle = FlatStyle.Flat,
-				Enabled = false
+				Content = "Clear Slot",
+				Width = 115,
+				Height = 30,
+				Background = new SolidColorBrush(Color.FromRgb(150, 38, 38)),
+				Foreground = Brushes.White,
+				BorderBrush = new SolidColorBrush(Color.FromRgb(100, 28, 28)),
+				BorderThickness = new Thickness(1),
+				IsEnabled = false
 			};
-			_clearSlotButton.FlatAppearance.BorderColor = Color.FromArgb(100, 28, 28);
 			_clearSlotButton.Click += (_, __) =>
 			{
 				if (_selectedSlot > 0)
-					ConfirmClearSlot(_selectedSlot);
+					ConfirmClearSlotAsync(_selectedSlot);
 			};
-			panel.Controls.Add(_clearSlotButton);
+			Place(canvas, _clearSlotButton, 12, y);
 
-			// Cleaned up original PositionImportButtons mechanics since they are now handled dynamically!
-			return panel;
+			return new ScrollViewer
+			{
+				Content = canvas,
+				HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+				VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+			};
 		}
 
 		private int BuildPrimitiveControlsRow(TileDefinition tile, RenderPrimitive? primitive, int startY, int primitiveIndex = 0)
 		{
 			int y = startY;
 
-			// 1. Mesh Row
+			// 1. Mesh row
 			string meshName = primitive?.MeshSourcePath != null ? Path.GetFileName(primitive.MeshSourcePath) : "(none)";
-			var meshLabel = PropLabel($"Mesh [{primitiveIndex}]: {meshName}", new Point(12, y));
-			meshLabel.Size = new Size(230, 20);
-			_variantPanel!.Controls.Add(meshLabel);
+			var meshLabel = PropLabel($"Mesh [{primitiveIndex}]: {meshName}");
+			Place(_variantPanel!, meshLabel, 12, y, 230, 20);
 
 			var meshBtn = MakeButton("Import OBJ", 105);
-			meshBtn.Location = new Point(_variantPanel.Width - 117, y - 2);
-			meshBtn.Anchor = AnchorStyles.Top | AnchorStyles.Right;
 			meshBtn.Click += (_, __) => DynamicImportMesh(tile, primitiveIndex);
-			_variantPanel.Controls.Add(meshBtn);
+			Place(_variantPanel!, meshBtn, PropsRowWidth - 117, y - 2);
 			y += 32;
 
-			// 2. Texture Row
+			// 2. Texture row
 			string texName = primitive?.TextureSourcePath != null ? Path.GetFileName(primitive.TextureSourcePath) : "(none)";
-			var texLabel = PropLabel($"Texture [{primitiveIndex}]: {texName}", new Point(12, y));
-			texLabel.Size = new Size(230, 20);
-			_variantPanel.Controls.Add(texLabel);
+			var texLabel = PropLabel($"Texture [{primitiveIndex}]: {texName}");
+			Place(_variantPanel!, texLabel, 12, y, 230, 20);
 
 			var texBtn = MakeButton("Import Tex", 105);
-			texBtn.Location = new Point(_variantPanel.Width - 117, y - 2);
-			texBtn.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-			texBtn.Enabled = (primitive?.Mesh != null); // Only allow texturing if a mesh is present!
+			texBtn.IsEnabled = primitive?.Mesh != null; // only allow texturing if a mesh is present
 			texBtn.Click += (_, __) => DynamicImportTexture(tile, primitiveIndex);
-			_variantPanel.Controls.Add(texBtn);
+			Place(_variantPanel!, texBtn, PropsRowWidth - 117, y - 2);
 			y += 42;
 
-			return y - startY; // Returns total layout height consumed by this primitive row
+			return y - startY;
 		}
 
 		private void AdjustLowerLayout(int variantPanelHeight)
 		{
-			if (_variantPanel == null || _previewLabel == null || _previewBox == null || _clearSlotButton == null)
+			if (_variantPanel == null || _previewLabel == null || _previewBorder == null || _clearSlotButton == null)
 				return;
 
 			_variantPanel.Height = variantPanelHeight;
 
-			// Pivot point starts right under the variant content zone
 			int currentY = _sharedBottomY + variantPanelHeight;
+			if (variantPanelHeight > 0) currentY += 14;
 
-			// Push down the remaining components natively
-			if (variantPanelHeight > 0) currentY += 14; // Add padding space if variant is populated
-
-			_previewLabel.Location = new Point(12, currentY);
+			MoveTo(_previewLabel, 12, currentY);
 			currentY += 22;
 
-			_previewBox.Location = new Point(12, currentY);
+			MoveTo(_previewBorder, 12, currentY);
 			currentY += 144;
 
-			_clearSlotButton.Location = new Point(12, currentY);
+			MoveTo(_clearSlotButton, 12, currentY);
 		}
 
 		private void LoadTileProperties(TileDefinition tile)
 		{
-			// Keep the guard clause
 			if (_variantPanel == null || _slotLabel == null) return;
 
 			_ignoreChanges = true;
@@ -713,34 +697,23 @@ namespace Glyphborn.Mapper
 			bool isEmpty = IsEmptySlot(tile.Id);
 			bool isAir = tile.Id == 0;
 
-			_slotLabel!.Text = isAir ? "Slot 0  —  Air (reserved)"
-							 : isEmpty ? $"Slot {tile.Id}  —  (empty)"
-							 : $"Slot {tile.Id}";
+			_slotLabel.Text = isAir ? "Slot 0  —  Air (reserved)"
+							: isEmpty ? $"Slot {tile.Id}  —  (empty)"
+							: $"Slot {tile.Id}";
 
 			_nameTextBox!.Text = tile.Name;
-			_nameTextBox.Enabled = !isAir;
+			_nameTextBox.IsEnabled = !isAir;
 
 			_collisionBox!.SelectedItem = tile.Collision;
-			_collisionBox.Enabled = !isAir;
+			_collisionBox.IsEnabled = !isAir;
 
-			// --- REMOVED: _importMeshButton and _importTextureButton logic ---
-			// The individual rows now handle their own button states.
+			DisposePreview();
+			var visual = tile.GetPrimitives().FirstOrDefault();
+			_previewImage!.Source = visual?.Texture != null ? TextureToBitmap(visual.Texture) : null;
 
-			if (_previewBox!.Image != null)
-			{
-				_previewBox.Image.Dispose();
-				_previewBox.Image = null;
-			}
+			_clearSlotButton!.IsEnabled = !isAir;
 
-			RenderPrimitive? visual = tile.GetPrimitives().FirstOrDefault();
-			_previewBox.Image = visual?.Texture != null
-				? TextureToBitmap(visual.Texture)
-				: null;
-
-			_clearSlotButton!.Enabled = !isAir;
-
-			// Clear previous custom inputs
-			_variantPanel!.Controls.Clear();
+			_variantPanel.Children.Clear();
 			int variantHeight = 0;
 
 			if (!isAir && !isEmpty)
@@ -766,48 +739,31 @@ namespace Glyphborn.Mapper
 
 			_slotLabel!.Text = "No tile selected";
 			_nameTextBox!.Text = "";
-			_nameTextBox.Enabled = false;
-			_collisionBox!.Enabled = false;
+			_nameTextBox.IsEnabled = false;
+			_collisionBox!.IsEnabled = false;
 
-			if (_previewBox!.Image != null)
-			{
-				_previewBox.Image.Dispose();
-				_previewBox.Image = null;
-			}
+			DisposePreview();
 
-			_clearSlotButton!.Enabled = false;
+			_clearSlotButton!.IsEnabled = false;
 
-			_variantPanel!.Controls.Clear();
+			_variantPanel!.Children.Clear();
 			AdjustLowerLayout(0);
 
 			_ignoreChanges = false;
 		}
 
-		private int PopulateGenericProperties(TileGeneric tile)
-		{
-			// Simply display its single primitive layer row at y = 0
-			return BuildPrimitiveControlsRow(tile, tile.Primitive, 0, 0);
-		}
+		private int PopulateGenericProperties(TileGeneric tile) => BuildPrimitiveControlsRow(tile, tile.Primitive, 0, 0);
 
 		private int PopulateAnimatedProperties(TileAnimated tile)
 		{
 			int y = 0;
-			_variantPanel!.Controls.Add(PropLabel("Framerate:", new Point(12, y)));
+			Place(_variantPanel!, PropLabel("Framerate:"), 12, y);
 
-			var input = new NumericUpDown
-			{
-				Location = new Point(100, y - 2),
-				Width = 270,
-				Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top,
-				Minimum = 0,
-				Maximum = 255,
-				Value = tile.FrameRate
-			};
-			input.ValueChanged += (_, __) => { if (!_ignoreChanges) { tile.FrameRate = (byte)input.Value; MarkDirty(); } };
-			_variantPanel.Controls.Add(input);
+			var input = new NumericUpDown { Width = 270, Minimum = 0, Maximum = 255, Value = tile.FrameRate };
+			input.ValueChanged += (_, __) => PropertyChanged();
+			Place(_variantPanel!, input, 100, y - 2);
 			y += 42;
 
-			// Append its primitive row below the numerical input
 			y += BuildPrimitiveControlsRow(tile, tile.Primitive, y, 0);
 			return y;
 		}
@@ -815,44 +771,25 @@ namespace Glyphborn.Mapper
 		private int PopulateDoorProperties(TileEntityDoor tile)
 		{
 			int y = 0;
-			_variantPanel!.Controls.Add(PropLabel("Framerate:", new Point(12, y)));
+			Place(_variantPanel!, PropLabel("Framerate:"), 12, y);
 
-			var fpsInput = new NumericUpDown
-			{
-				Location = new Point(100, y - 2),
-				Width = 270,
-				Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top,
-				Minimum = 0,
-				Maximum = 255,
-				Value = tile.FrameRate
-			};
-			fpsInput.ValueChanged += (_, __) => { if (!_ignoreChanges) { tile.FrameRate = (byte)fpsInput.Value; MarkDirty(); } };
-			_variantPanel.Controls.Add(fpsInput);
+			var fpsInput = new NumericUpDown { Width = 270, Minimum = 0, Maximum = 255, Value = tile.FrameRate };
+			fpsInput.ValueChanged += (_, __) => PropertyChanged();
+			Place(_variantPanel!, fpsInput, 100, y - 2);
 			y += 32;
 
-			_variantPanel!.Controls.Add(PropLabel("Open Preview:", new Point(12, y)));
-			var check = new CheckBox
-			{
-				Location = new Point(100, y - 4),
-				Anchor = AnchorStyles.Left | AnchorStyles.Top,
-				Checked = tile.OpenState
-			};
-			check.CheckedChanged += (_, __) => { if (!_ignoreChanges) { tile.OpenState = check.Checked; MarkDirty(); } };
-			_variantPanel.Controls.Add(check);
+			Place(_variantPanel!, PropLabel("Open Preview:"), 12, y);
+			var check = new CheckBox { IsChecked = tile.OpenState };
+			check.IsCheckedChanged += (_, __) => PropertyChanged();
+			Place(_variantPanel!, check, 100, y - 4);
 			y += 42;
 
-			// Loop through every existing primitive layer in this entity!
 			for (int i = 0; i < tile.Primitives.Count; i++)
-			{
 				y += BuildPrimitiveControlsRow(tile, tile.Primitives[i], y, i);
-			}
 
-			// Add an explicit Append Button so developers can add layers sequentially
 			var addLayerBtn = MakeButton("+ Add Primitive Layer", 358);
-			addLayerBtn.Location = new Point(12, y);
-			addLayerBtn.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top;
 			addLayerBtn.Click += (_, __) => { tile.Primitives.Add(null!); LoadTileProperties(tile); MarkDirty(); };
-			_variantPanel.Controls.Add(addLayerBtn);
+			Place(_variantPanel!, addLayerBtn, 12, y);
 			y += 38;
 
 			return y;
@@ -861,112 +798,109 @@ namespace Glyphborn.Mapper
 		private int PopulateCropProperties(TileEntityCrop tile)
 		{
 			int y = 0;
-			_variantPanel!.Controls.Add(PropLabel("Growth Rate:", new Point(12, y)));
+			Place(_variantPanel!, PropLabel("Growth Rate:"), 12, y);
 
-			var input = new NumericUpDown
-			{
-				Location = new Point(100, y - 2),
-				Width = 270,
-				Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top,
-				Minimum = 0,
-				Maximum = ushort.MaxValue,
-				Value = tile.GrowthRate
-			};
-			input.ValueChanged += (_, __) => { if (!_ignoreChanges) { tile.GrowthRate = (ushort)input.Value; MarkDirty(); } };
-			_variantPanel.Controls.Add(input);
+			var input = new NumericUpDown { Width = 270, Minimum = 0, Maximum = ushort.MaxValue, Value = tile.GrowthRate };
+			input.ValueChanged += (_, __) => PropertyChanged();
+			Place(_variantPanel!, input, 100, y - 2);
 			y += 42;
 
-			// Render all available primitive layers
 			for (int i = 0; i < tile.Primitives.Count; i++)
-			{
 				y += BuildPrimitiveControlsRow(tile, tile.Primitives[i], y, i);
-			}
 
-			// Add Append Button for expanding layers
 			var addLayerBtn = MakeButton("+ Add Growth Stage Layer", 358);
-			addLayerBtn.Location = new Point(12, y);
-			addLayerBtn.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top;
 			addLayerBtn.Click += (_, __) => { tile.Primitives.Add(null!); LoadTileProperties(tile); MarkDirty(); };
-			_variantPanel.Controls.Add(addLayerBtn);
+			Place(_variantPanel!, addLayerBtn, 12, y);
 			y += 38;
 
 			return y;
 		}
 
-		private void PropertyChanged(object? sender, EventArgs e)
+		private new void PropertyChanged()
 		{
 			if (_ignoreChanges || _selectedSlot < 0 || _selectedSlot >= _tileset.Tiles.Count)
 				return;
 
 			var tile = _tileset.Tiles[_selectedSlot];
-			tile.Name = _nameTextBox!.Text;
+			tile.Name = _nameTextBox!.Text ?? "";
 
-			if (_collisionBox!.SelectedIndex >= 0)
-				tile.Collision = (CollisionType)_collisionBox.SelectedItem!;
+			if (_collisionBox!.SelectedItem is CollisionType collision)
+				tile.Collision = collision;
 
-			_gridCanvas!.Invalidate();
+			_gridCanvas?.InvalidateVisual();
 			MarkDirty();
 		}
 
 		// =====================================================================
-		//  Mesh / Texture import (Updated for Multi-Primitive TileEntities)
+		//  Mesh / Texture import
 		// =====================================================================
 
-		private void DynamicImportMesh(TileDefinition tile, int index)
+		private IStorageProvider? GetStorageProvider() => TopLevel.GetTopLevel(this)?.StorageProvider;
+
+		private async void DynamicImportMesh(TileDefinition tile, int index)
 		{
-			using var ofd = new OpenFileDialog { Filter = "OBJ Files|*.obj", Title = $"Import Mesh for Primitive [{index}]" };
-			if (ofd.ShowDialog() != DialogResult.OK) return;
+			var storage = GetStorageProvider();
+			if (storage == null) return;
+
+			var files = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
+			{
+				Title = $"Import Mesh for Primitive [{index}]",
+				AllowMultiple = false,
+				FileTypeFilter = new[] { new FilePickerFileType("OBJ Files") { Patterns = new[] { "*.obj" } } }
+			});
+
+			var file = files.FirstOrDefault();
+			if (file == null) return;
 
 			try
 			{
-				var mesh = MeshLoader.LoadOBJ(ofd.FileName);
+				var mesh = MeshLoader.LoadOBJ(file.Path.LocalPath);
 
-				// Extract fallback texture metadata from current location if it exists
 				var existingPrimitives = tile.GetPrimitives().ToList();
 				RenderPrimitive? currentPrim = index < existingPrimitives.Count ? existingPrimitives[index] : null;
 				var existingTex = currentPrim?.Texture ?? new Texture(1, 1, new uint[] { 0x00000000 });
 
 				var newVisual = new RenderPrimitive(mesh, existingTex)
 				{
-					MeshSourcePath = ofd.FileName,
+					MeshSourcePath = file.Path.LocalPath,
 					TextureSourcePath = currentPrim?.TextureSourcePath
 				};
 
-				if (tile is TileEntity entity)
-				{
-					if (index < entity.Primitives.Count)
-						entity.Primitives[index] = newVisual;
-					else
-						entity.Primitives.Add(newVisual);
-				}
-				else if (tile is TileGeneric generic)
-				{
-					generic.Primitive = newVisual;
-				}
-				else if (tile is TileAnimated animated)
-				{
-					animated.Primitive = newVisual;
-				}
+				ApplyVisual(tile, index, newVisual);
 
 				LoadTileProperties(tile);
-				_gridCanvas!.Invalidate();
+				_gridCanvas?.InvalidateVisual();
 				MarkDirty();
 			}
 			catch (Exception ex)
 			{
-				MessageBox.Show($"Failed to import mesh:\n{ex.Message}", "Error");
+				await ShowErrorAsync("Error", $"Failed to import mesh:\n{ex.Message}");
 			}
 		}
 
-		private void DynamicImportTexture(TileDefinition tile, int index)
+		private async void DynamicImportTexture(TileDefinition tile, int index)
 		{
-			using var ofd = new OpenFileDialog { Filter = "Image Files|*.png;*.jpg;*.bmp", Title = $"Import Texture for Primitive [{index}]" };
-			if (ofd.ShowDialog() != DialogResult.OK) return;
+			var storage = GetStorageProvider();
+			if (storage == null) return;
+
+			var files = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
+			{
+				Title = $"Import Texture for Primitive [{index}]",
+				AllowMultiple = false,
+				FileTypeFilter = new[] { new FilePickerFileType("Image Files") { Patterns = new[] { "*.png", "*.jpg", "*.jpeg", "*.bmp" } } }
+			});
+
+			var file = files.FirstOrDefault();
+			if (file == null) return;
 
 			try
 			{
-				using var bmp = new Bitmap(ofd.FileName);
-				var texture = BitmapToTexture(bmp);
+				Texture texture;
+				await using (var stream = await file.OpenReadAsync())
+				using (var bmp = new Bitmap(stream))
+				{
+					texture = BitmapToTexture(bmp);
+				}
 
 				if (tile is TileEntity entity)
 				{
@@ -975,7 +909,7 @@ namespace Glyphborn.Mapper
 					entity.Primitives[index] = new RenderPrimitive(currentMesh, texture)
 					{
 						MeshSourcePath = currentMeshPath,
-						TextureSourcePath = ofd.FileName
+						TextureSourcePath = file.Path.LocalPath
 					};
 				}
 				else if (tile is TileGeneric generic && generic.Primitive != null)
@@ -983,7 +917,7 @@ namespace Glyphborn.Mapper
 					generic.Primitive = new RenderPrimitive(generic.Primitive.Mesh, texture)
 					{
 						MeshSourcePath = generic.Primitive.MeshSourcePath,
-						TextureSourcePath = ofd.FileName
+						TextureSourcePath = file.Path.LocalPath
 					};
 				}
 				else if (tile is TileAnimated animated && animated.Primitive != null)
@@ -991,37 +925,111 @@ namespace Glyphborn.Mapper
 					animated.Primitive = new RenderPrimitive(animated.Primitive.Mesh, texture)
 					{
 						MeshSourcePath = animated.Primitive.MeshSourcePath,
-						TextureSourcePath = ofd.FileName
+						TextureSourcePath = file.Path.LocalPath
 					};
 				}
 
 				LoadTileProperties(tile);
-				_gridCanvas!.Invalidate();
+				_gridCanvas?.InvalidateVisual();
 				MarkDirty();
 			}
 			catch (Exception ex)
 			{
-				MessageBox.Show($"Failed to import texture:\n{ex.Message}", "Error");
+				await ShowErrorAsync("Error", $"Failed to import texture:\n{ex.Message}");
 			}
+		}
+
+		private static void ApplyVisual(TileDefinition tile, int index, RenderPrimitive visual)
+		{
+			if (tile is TileEntity entity)
+			{
+				if (index < entity.Primitives.Count) entity.Primitives[index] = visual;
+				else entity.Primitives.Add(visual);
+			}
+			else if (tile is TileGeneric generic) generic.Primitive = visual;
+			else if (tile is TileAnimated animated) animated.Primitive = visual;
 		}
 
 		// =====================================================================
 		//  Save
 		// =====================================================================
 
-		private void SaveTileset_Click(object? sender, EventArgs e)
+		private void SaveTileset_Click(object? sender, RoutedEventArgs e)
 		{
 			try
 			{
 				TilesetSerializer.SaveBinary(_tileset);
 				_isDirty = false;
-				DialogResult = DialogResult.OK;
-				Close();
+				_savedSuccessfully = true;
+				Close(true);
 			}
 			catch (Exception ex)
 			{
-				MessageBox.Show($"Failed to save tileset:\n{ex.Message}", "Error");
+				_ = ShowErrorAsync("Error", $"Failed to save tileset:\n{ex.Message}");
 			}
+		}
+
+		// =====================================================================
+		//  Minimal modal helpers (placeholder for MessageBox — swap for your
+		//  app's existing dialog helper if you already have one)
+		// =====================================================================
+
+		private async Task<bool> ConfirmAsync(string title, string message)
+		{
+			var dialog = new Window
+			{
+				Title = title,
+				Width = 380,
+				SizeToContent = SizeToContent.Height,
+				CanResize = false,
+				WindowStartupLocation = WindowStartupLocation.CenterOwner,
+				Background = new SolidColorBrush(Color.FromRgb(30, 30, 36))
+			};
+
+			bool result = false;
+
+			var yesBtn = MakeButton("Yes", 90);
+			var noBtn = MakeButton("No", 90);
+			yesBtn.Click += (_, __) => { result = true; dialog.Close(); };
+			noBtn.Click += (_, __) => { result = false; dialog.Close(); };
+
+			var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
+			buttons.Children.Add(yesBtn);
+			buttons.Children.Add(noBtn);
+
+			var layout = new StackPanel { Margin = new Thickness(20), Spacing = 20 };
+			layout.Children.Add(new TextBlock { Text = message, Foreground = Brushes.White, TextWrapping = TextWrapping.Wrap });
+			layout.Children.Add(buttons);
+
+			dialog.Content = layout;
+
+			await dialog.ShowDialog(this);
+			return result;
+		}
+
+		private async Task ShowErrorAsync(string title, string message)
+		{
+			var dialog = new Window
+			{
+				Title = title,
+				Width = 380,
+				SizeToContent = SizeToContent.Height,
+				CanResize = false,
+				WindowStartupLocation = WindowStartupLocation.CenterOwner,
+				Background = new SolidColorBrush(Color.FromRgb(30, 30, 36))
+			};
+
+			var okBtn = MakeButton("OK", 90);
+			okBtn.HorizontalAlignment = HorizontalAlignment.Right;
+			okBtn.Click += (_, __) => dialog.Close();
+
+			var layout = new StackPanel { Margin = new Thickness(20), Spacing = 20 };
+			layout.Children.Add(new TextBlock { Text = message, Foreground = Brushes.White, TextWrapping = TextWrapping.Wrap });
+			layout.Children.Add(okBtn);
+
+			dialog.Content = layout;
+
+			await dialog.ShowDialog(this);
 		}
 
 		// =====================================================================
@@ -1030,84 +1038,118 @@ namespace Glyphborn.Mapper
 
 		private void MarkDirty() => _isDirty = true;
 
-		private static Button MakeButton(string text, int width)
+		private static void Place(Canvas parent, Control control, double x, double y, double? width = null, double? height = null)
 		{
-			var b = new Button
-			{
-				Text = text,
-				Width = width,
-				Height = 28,
-				FlatStyle = FlatStyle.Flat,
-				BackColor = Color.FromArgb(52, 52, 64),
-				ForeColor = Color.White
-			};
-			b.FlatAppearance.BorderColor = Color.FromArgb(68, 68, 82);
-			b.FlatAppearance.BorderSize = 1;
-			return b;
+			if (width.HasValue) control.Width = width.Value;
+			if (height.HasValue) control.Height = height.Value;
+			Canvas.SetLeft(control, x);
+			Canvas.SetTop(control, y);
+			parent.Children.Add(control);
 		}
 
-		private static Label PropLabel(string text, Point loc) => new Label
+		private static void MoveTo(Control control, double x, double y)
+		{
+			Canvas.SetLeft(control, x);
+			Canvas.SetTop(control, y);
+		}
+
+		private static Button MakeButton(string text, double width)
+		{
+			return new Button
+			{
+				Content = text,
+				Width = width,
+				Height = 28,
+				Background = new SolidColorBrush(Color.FromRgb(52, 52, 64)),
+				Foreground = Brushes.White,
+				BorderBrush = new SolidColorBrush(Color.FromRgb(68, 68, 82)),
+				BorderThickness = new Thickness(1)
+			};
+		}
+
+		private static TextBlock PropLabel(string text) => new TextBlock
 		{
 			Text = text,
-			Location = loc,
-			Size = new Size(86, 20),
-			ForeColor = Color.White
+			Width = 86,
+			Height = 20,
+			Foreground = Brushes.White
 		};
 
-		private static Label HRule(int y) => new Label
+		private static Border HRule() => new Border
 		{
-			Location = new Point(12, y),
-			Size = new Size(370, 1),
-			BackColor = Color.FromArgb(58, 58, 72),
-			Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top
+			Width = 370,
+			Height = 1,
+			Background = new SolidColorBrush(Color.FromRgb(58, 58, 72))
 		};
 
 		private static Texture BitmapToTexture(Bitmap bmp)
 		{
-			var rect = new Rectangle(0, 0, bmp.Width, bmp.Height);
-			var bmpData = bmp.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+			int w = bmp.PixelSize.Width;
+			int h = bmp.PixelSize.Height;
+			int stride = w * 4;
+			var buffer = new byte[stride * h];
+
+			var handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
 			try
 			{
-				int stride = Math.Abs(bmpData.Stride);
-				byte[] data = new byte[stride * bmp.Height];
-				Marshal.Copy(bmpData.Scan0, data, 0, data.Length);
-
-				var pixels = new uint[bmp.Width * bmp.Height];
-				for (int py = 0; py < bmp.Height; py++)
-					for (int px = 0; px < bmp.Width; px++)
-					{
-						int src = py * stride + px * 4;
-						pixels[py * bmp.Width + px] =
-							((uint)data[src + 3] << 24) |
-							((uint)data[src + 2] << 16) |
-							((uint)data[src + 1] << 8) |
-								   data[src + 0];
-					}
-
-				return new Texture(bmp.Width, bmp.Height, pixels);
+				bmp.CopyPixels(new PixelRect(0, 0, w, h), handle.AddrOfPinnedObject(), buffer.Length, stride);
 			}
-			finally { bmp.UnlockBits(bmpData); }
+			finally
+			{
+				handle.Free();
+			}
+
+			var pixels = new uint[w * h];
+			for (int py = 0; py < h; py++)
+			{
+				for (int px = 0; px < w; px++)
+				{
+					int src = py * stride + px * 4;
+					// Assumes Bgra8888 byte order from CopyPixels — verify against your Avalonia version.
+					byte b = buffer[src + 0];
+					byte g = buffer[src + 1];
+					byte r = buffer[src + 2];
+					byte a = buffer[src + 3];
+					pixels[py * w + px] = ((uint)a << 24) | ((uint)r << 16) | ((uint)g << 8) | b;
+				}
+			}
+
+			return new Texture(w, h, pixels);
 		}
 
-		private static Bitmap TextureToBitmap(Texture tex)
+		private static WriteableBitmap TextureToBitmap(Texture tex)
 		{
-			var bmp = new Bitmap(tex.Width, tex.Height, PixelFormat.Format32bppArgb);
-			for (int py = 0; py < tex.Height; py++)
-				for (int px = 0; px < tex.Width; px++)
+			var wb = new WriteableBitmap(
+				new PixelSize(tex.Width, tex.Height),
+				new Vector(96, 96),
+				PixelFormat.Bgra8888,
+				AlphaFormat.Unpremul);
+
+			using var fb = wb.Lock();
+			int stride = fb.RowBytes;
+			var row = new byte[stride];
+
+			for (int y = 0; y < tex.Height; y++)
+			{
+				Array.Clear(row, 0, row.Length);
+				for (int x = 0; x < tex.Width; x++)
 				{
-					uint p = tex.Pixels[py * tex.Width + px];
-					bmp.SetPixel(px, py, Color.FromArgb(
-						(int)(p >> 24 & 0xFF),
-						(int)(p >> 16 & 0xFF),
-						(int)(p >> 8 & 0xFF),
-						(int)(p & 0xFF)));
+					uint p = tex.Pixels[y * tex.Width + x];
+					int o = x * 4;
+					row[o + 0] = (byte)p;          // B
+					row[o + 1] = (byte)(p >> 8);    // G
+					row[o + 2] = (byte)(p >> 16);   // R
+					row[o + 3] = (byte)(p >> 24);   // A
 				}
-			return bmp;
+				Marshal.Copy(row, 0, fb.Address + y * stride, stride);
+			}
+
+			return wb;
 		}
 	}
 
 	// =========================================================================
-	//  MeshLoader — unchanged from original
+	//  MeshLoader — unchanged from original (no WinForms dependency)
 	// =========================================================================
 
 	internal class MeshLoader
@@ -1165,11 +1207,11 @@ namespace Glyphborn.Mapper
 
 		private static void AddFaceVertex(
 			string token,
-			System.Collections.Generic.List<Vec3> positions,
-			System.Collections.Generic.List<Vec2> uvs,
-			System.Collections.Generic.List<Vertex> vertices,
-			System.Collections.Generic.List<ushort> indices,
-			System.Collections.Generic.Dictionary<(int, int), ushort> vertexMap)
+			List<Vec3> positions,
+			List<Vec2> uvs,
+			List<Vertex> vertices,
+			List<ushort> indices,
+			Dictionary<(int, int), ushort> vertexMap)
 		{
 			var parts = token.Split('/');
 			int posIndex = int.Parse(parts[0]) - 1;
